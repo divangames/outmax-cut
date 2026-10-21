@@ -15,11 +15,11 @@ from app import app, TOKEN, validate_settings
 class MontageTests(unittest.TestCase):
     def test_premiere_timing(self):
         segments = template_segments([MODEL_SECONDS, HANDS_SECONDS])
-        self.assertEqual(sum(s["frames"] for s in segments), 675)
+        self.assertEqual(sum(s["frames"] for s in segments), 684)
         self.assertEqual(sum(s["frames"] for s in segments[:6]), 277)
         self.assertAlmostEqual(segments[6]["start"], .5/30)
-        self.assertAlmostEqual(segments[6]["end"], 15.5166666667)
-        self.assertEqual(segments[6]["frames"], 372)
+        self.assertAlmostEqual(segments[6]["end"], 15.8916666667)
+        self.assertEqual(segments[6]["frames"], 381)
 
     def test_scaled_sources_stay_inside_source(self):
         for durations in ([1, 1], [7.1, 12.7], [600, 500]):
@@ -65,7 +65,7 @@ class MontageTests(unittest.TestCase):
             self.assertGreaterEqual(len(ranges), 2)
             self.assertLess(sum(b-a for a,b in ranges), 7)
             segments = smart_segments([path,path], 40, threading.Event())
-            self.assertEqual(sum(s["frames"] for s in segments), 675)
+            self.assertEqual(sum(s["frames"] for s in segments), 684)
 
     def test_invalid_settings_and_csrf(self):
         for data in ({"crops":[float("nan"),.5]}, {"crops":[-1,.5]},

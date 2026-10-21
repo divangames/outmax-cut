@@ -15,7 +15,7 @@
     $('updateError').textContent = data.error || '';
     $('updateError').hidden = !data.error;
     $('updateProgress').hidden = data.status !== 'downloading';
-    $('updateProgress').value = data.progress || 0;
+    motion.progress($('updateProgress'),data.progress || 0);
     $('checkUpdateButton').disabled = ['checking','downloading','installing'].includes(data.status);
     $('downloadUpdateButton').hidden = data.status !== 'available';
     $('installUpdateButton').hidden = data.status !== 'ready' || !canInstall;
@@ -34,7 +34,7 @@
     catch (e) { $('updateError').textContent=e.message; $('updateError').hidden=false; }
   }
   $('updatesButton').onclick = () => {
-    const panel = $('updatesPanel'); panel.hidden = !panel.hidden;
+    const panel = $('updatesPanel'); motion.visible(panel,panel.hidden);
     $('updatesButton').setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) { poll(); panel.scrollIntoView({block:'nearest'}); }
   };

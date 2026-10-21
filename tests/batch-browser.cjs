@@ -56,7 +56,7 @@ const url=process.env.OUTMAX_URL||'http://127.0.0.1:8769';
     const reports=fs.readdirSync(folder).filter(f=>f==='монтаж.txt');
     assert(reports.length>=1);
     const report=JSON.parse(fs.readFileSync(path.join(folder,reports.at(-1)),'utf8'));
-    assert.equal(report.frames,676);
+    assert.equal(report.frames,685);
     if(sku==='SKU-001'){assert.equal(report.settings.transition,'cut');assert.equal(report.settings.crops[0],.72);}
     else{assert.equal(report.settings.mode,'smart');assert.equal(report.settings.crops[1],.35);}
   }

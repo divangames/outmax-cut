@@ -3,10 +3,13 @@
   const defaults = () => ({mode:'template',transition:'lens',crops:[.824,.5],sensitivity:40,bitrate_kbps:2500});
   const batch = {mode:false,items:[],active:null,single:null,importing:false,importId:null,
     cancelImport:false,running:false,id:null,native:false,loading:false,collecting:false};
+  const rows=new Map();
+  let lastEditLock, paintFrame;
+  const text=(el,value)=>{if(el.textContent!==String(value))el.textContent=String(value);};
   const current = () => batch.items.find(item=>item.id===batch.active);
   const ready = item => item.snapshot.sources.every(Boolean) && item.snapshot.sources[0].id!==item.snapshot.sources[1].id;
   const locked = () => state.running||state.uploading.some(Boolean)||batch.running||batch.importing||batch.collecting;
-  const error = message => {$('batchError').textContent=message;$('batchError').hidden=!message;};
+  const error = message => {$('batchError').textContent=message;$('batchError').hidden=!message;if(!batch.mode)showError(message);};
   function remember(){
     if(batch.loading||batch.running||!batch.mode||!current())return;
     const item=current();
@@ -18,6 +21,7 @@
   }
   function refreshLocks(){
     const editLocked=locked();
+    if($('batchSelectAll'))$('batchSelectAll').disabled=editLocked||!batch.items.length;
     ['singleMode','batchMode'].forEach(id=>$(id).disabled=editLocked);
     ['swapDetailButton','applySettingsButton','batchModelSelect','batchHandsSelect'].forEach(id=>$(id).disabled=editLocked);
     ['chooseOutputButton','batchOutputPath','selectAllButton'].forEach(id=>$(id).disabled=editLocked);
@@ -25,7 +29,7 @@
     $('applySettingsButton').disabled=editLocked||batch.items.length<2;
     $('importFolderButton').disabled=editLocked;
     $('folderDrop').setAttribute('aria-disabled',String(editLocked));
-    document.querySelectorAll('.batch-row [data-edit]').forEach(el=>el.disabled=editLocked);
+    if(lastEditLock!==editLocked){for(const row of rows.values())row.querySelectorAll('[data-edit]').forEach(el=>el.disabled=editLocked);lastEditLock=editLocked;}
     const count=batch.items.filter(item=>item.selected&&ready(item)).length;
     $('batchRenderButton').disabled=editLocked||!count||!$('batchOutputPath').value.trim();
     $('batchRenderButton').textContent=`Собрать выбранные${count?' · '+count:''}`;
@@ -36,7 +40,9 @@
     if(enabled){batch.single=editorSnapshot();batch.mode=true;}
     else{remember();batch.mode=false;}
     $('singleMode').setAttribute('aria-pressed',String(!enabled));$('batchMode').setAttribute('aria-pressed',String(enabled));
-    $('batchPanel').hidden=!enabled;
+    document.body.classList.toggle('batch-mode',enabled);
+    motion.visible($('batchPanel'),enabled);
+    window.workspaceLayout?.(enabled);
     $('pageTitle').textContent=enabled?'Пакетная обработка':'Редактор видео';
     $('singleArticleRow').hidden=enabled;
     $('pageSubtitle').textContent=enabled?'Проверьте пары, настройте каждый товар и запустите очередь.':'Исходники → монтаж → экспорт';
@@ -46,6 +52,7 @@
       $('editorWorkspace').hidden=false;$('batchDetail').hidden=true;
       batch.loading=true;loadEditor(batch.single);batch.loading=false;
     }
+    motion.reveal($('editorWorkspace'));
     refreshLocks();
   }
   function detailSelectors(item){
@@ -55,7 +62,7 @@
       item.candidates.forEach(c=>select.add(new Option(c.name,c.id)));
       select.value=item.snapshot.sources[i]?.id||'';
     }
-    $('batchDetailTitle').textContent=item.name;
+    $('batchDetailTitle').textContent='Артикул '+item.name.split('/').filter(Boolean).at(-1);
     $('batchDetailNote').textContent=item.detection+' Настройки относятся только к этому ролику.';
   }
   function openItem(id){
@@ -65,12 +72,14 @@
     $('editorWorkspace').hidden=false;$('batchDetail').hidden=false;
     batch.loading=true;loadEditor(item.snapshot);batch.loading=false;
     detailSelectors(item);
-    document.querySelectorAll('.batch-row').forEach(row=>row.classList.toggle('selected',row.dataset.id===id));
+    if(!item.snapshot.result)window.previewSource?.(0);
+    for(const [key,row] of rows)row.classList.toggle('selected',key===id);
     refreshLocks();
   }
   function openAndView(id){
     openItem(id);
-    $('batchDetail').scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+    motion.reveal($('editorWorkspace'));
+    if(innerWidth<900)$('batchDetail').scrollIntoView({block:'nearest',behavior:'instant'});
   }
   const statusText = item => ({
     ready:'Готов к сборке',changed:'Настройки изменены',queued:'В очереди',running:`Обработка · ${item.progress||0}%`,
@@ -78,15 +87,21 @@
   }[item.status] || 'Готов к сборке');
   function updateRows(){
     for(const item of batch.items){
-      const row=document.querySelector(`.batch-row[data-id="${item.id}"]`);
+      const row=rows.get(item.id);
       if(!row)continue;
-      row.querySelector('.batch-item-status').textContent=ready(item)?statusText(item):'Нужно выбрать пару';
+      const statusKey=[item.status,item.progress,item.error,ready(item),item.selected].join('|');
+      if(row.dataset.statusKey===statusKey)continue;
+      row.dataset.statusKey=statusKey;
+      row.querySelector('.batch-item-check').checked=item.selected;
+      text(row.querySelector('.batch-item-status'),ready(item)?statusText(item):'Нужно выбрать пару');
       row.querySelector('.batch-item-status').dataset.status=ready(item)?item.status:'incomplete';
-      row.querySelector('.batch-item-error').textContent=item.error||'';
-      row.querySelector('.batch-item-progress').value=item.progress||0;
+      text(row.querySelector('.batch-item-error'),item.error||'');
+      motion.progress(row.querySelector('.batch-item-progress'),item.progress||0);
       row.querySelector('.batch-item-progress').hidden=item.status!=='running';
     }
     $('batchCount').textContent=String(batch.items.length);
+    const selectAll=$('batchSelectAll');
+    if(selectAll){const count=batch.items.filter(i=>i.selected).length;selectAll.checked=!!count&&count===batch.items.length;selectAll.indeterminate=!!count&&count<batch.items.length;selectAll.disabled=locked()||!batch.items.length;}
     if(!batch.running){
       const count=batch.items.filter(i=>i.selected&&ready(i)).length;
       const completed=batch.items.filter(i=>i.status==='done'&&!i.snapshot.stale).length;
@@ -94,34 +109,61 @@
     }
     refreshLocks();
   }
-  function renderList(){
-    const list=$('batchList');list.replaceChildren();
-    if(!batch.items.length){const p=document.createElement('p');p.className='batch-empty';p.textContent='Добавьте папки — здесь появятся ролики и их исходники.';list.append(p);}
-    for(const item of batch.items){
-      const row=document.createElement('article');row.className='batch-row';row.dataset.id=item.id;
-      row.classList.toggle('selected',item.id===batch.active);
-      row.innerHTML='<input type="checkbox" data-edit class="batch-item-check"><button class="batch-item-open"><strong></strong><span></span></button><div class="batch-pair"></div><button class="text-button batch-swap" data-edit>Поменять местами</button><div class="batch-state"><span class="batch-item-status"></span><progress class="batch-item-progress" max="100" hidden></progress><small class="batch-item-error"></small></div><button class="batch-remove text-button" data-edit>Убрать</button>';
-      const check=row.querySelector('input');check.checked=item.selected;check.setAttribute('aria-label','Выбрать '+item.name);
-      check.onchange=()=>{item.selected=check.checked;updateRows();};
-      const open=row.querySelector('.batch-item-open');open.querySelector('strong').textContent=item.name;
-      open.querySelector('span').textContent=item.detection;open.onclick=()=>openAndView(item.id);
-      for(let i=0;i<2;i++){
-        const source=item.snapshot.sources[i],cell=document.createElement('button');cell.className='pair-preview';cell.onclick=()=>openAndView(item.id);
-        const label=document.createElement('span');label.textContent=i===0?'Модель':'Руки';
-        if(source){const img=document.createElement('img');img.src=source.poster;img.alt=source.name;img.style.objectPosition=`50% ${item.snapshot.settings.crops[i]*100}%`;cell.append(img);}
-        else {const empty=document.createElement('span');empty.className='no-source';empty.textContent='Выбрать';cell.append(empty);}
-        cell.append(label);row.querySelector('.batch-pair').append(cell);
-      }
-      row.querySelector('.batch-swap').onclick=()=>swap(item);
-      row.querySelector('.batch-remove').onclick=()=>{
-        if(locked())return;
-        batch.items=batch.items.filter(i=>i.id!==item.id);
-        if(batch.active===item.id){batch.active=null;$('batchDetail').hidden=true;$('editorWorkspace').hidden=true;}
-        renderList();
-      };
-      list.append(row);
+  function patchRow(row,item){
+    const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>s?.id),...item.snapshot.settings.crops].join('|');
+    if(row.dataset.visualKey===visualKey)return;
+    row.dataset.visualKey=visualKey;
+    row.classList.toggle('selected',item.id===batch.active);
+    const check=row.querySelector('.batch-item-check');check.checked=item.selected;
+    const open=row.querySelector('.batch-item-open');text(open.querySelector('strong'),item.name.split('/').filter(Boolean).at(-1));
+    open.title=item.name+' · '+item.detection;
+    for(let i=0;i<2;i++){
+      const source=item.snapshot.sources[i],cell=row.querySelectorAll('.pair-preview')[i];
+      const signature=(source?.id||'')+':'+item.snapshot.settings.crops[i];
+      if(cell.dataset.signature===signature)continue;
+      cell.dataset.signature=signature;cell.replaceChildren();
+      const label=document.createElement('span');label.textContent=source?.name||(i===0?'Нет видео ног':'Нет видео рук');
+      if(source){const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=source.poster;img.alt='';img.width=48;img.height=48;img.style.objectPosition=`50% ${item.snapshot.settings.crops[i]*100}%`;cell.append(img);}
+      else {const empty=document.createElement('span');empty.className='no-source';empty.textContent='—';cell.append(empty);}
+      cell.append(label);
     }
+  }
+  function makeRow(item){
+    const row=document.createElement('article');row.className='batch-row';row.dataset.id=item.id;
+    row.innerHTML='<input type="checkbox" data-edit class="batch-item-check"><button class="batch-item-open"><strong></strong></button><div class="batch-pair"><button class="pair-preview"></button><button class="pair-preview"></button></div><button class="text-button batch-swap" data-edit title="Поменять роли местами" aria-label="Поменять роли местами">⇄</button><div class="batch-state"><span class="batch-item-status"></span><progress class="batch-item-progress" max="100" hidden></progress><small class="batch-item-error"></small></div><button class="batch-remove text-button" data-edit aria-label="Убрать из очереди" title="Убрать из очереди">×</button>';
+    const check=row.querySelector('input');check.setAttribute('aria-label','Выбрать '+item.name);
+    check.onchange=()=>{item.selected=check.checked;updateRows();};
+    row.querySelector('.batch-item-open').onclick=()=>openAndView(item.id);
+    row.querySelectorAll('.pair-preview').forEach((cell,i)=>{cell.onclick=()=>{openAndView(item.id);window.previewSource?.(i);};});
+    row.querySelector('.batch-swap').onclick=()=>swap(item);
+    row.querySelector('.batch-remove').onclick=()=>{
+      if(locked())return;
+      const index=batch.items.indexOf(item),hadFocus=row.contains(document.activeElement);
+      batch.items.splice(index,1);
+      if(batch.active===item.id){batch.active=null;$('batchDetail').hidden=true;$('editorWorkspace').hidden=true;}
+      renderList();
+      if(hadFocus)(rows.get(batch.items[Math.min(index,batch.items.length-1)]?.id)?.querySelector('.batch-remove')||$('importFolderButton')).focus({preventScroll:true});
+    };
+    row.querySelectorAll('[data-edit]').forEach(el=>el.disabled=locked());
+    return row;
+  }
+  function renderList(){
+    const list=$('batchList'),ids=new Set(batch.items.map(item=>item.id));
+    motion.reconcile(list,()=>{
+      for(const [id,row] of rows)if(!ids.has(id)){motion.remove(row,list);rows.delete(id);}
+      list.querySelector('.batch-empty')?.remove();
+      for(const item of batch.items){
+        let row=rows.get(item.id);
+        if(!row){row=makeRow(item);rows.set(item.id,row);list.append(row);}
+        patchRow(row,item);
+      }
+      if(!batch.items.length){const empty=document.createElement('p');empty.className='batch-empty';empty.textContent='Добавьте папки с артикулами';list.append(empty);}
+    });
     updateRows();
+  }
+  function scheduleCurrent(){
+    if(paintFrame)return;
+    paintFrame=requestAnimationFrame(()=>{paintFrame=null;const item=current();if(item&&rows.has(item.id))patchRow(rows.get(item.id),item);updateRows();});
   }
   function changedItem(item){
     item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;
@@ -135,13 +177,13 @@
     // Crop follows the role, so the model still uses its legs framing.
     changedItem(item);
   }
-  function addGroups(groups){
+  async function addGroups(groups){
     const newItems=groups.map(group=>({
       ...group,id:crypto.randomUUID(),selected:group.sources.every(Boolean),status:'ready',
       snapshot:{sources:group.sources.map(id=>group.candidates.find(c=>c.id===id)||null),
         settings:defaults(),result:null,stale:false}
     }));
-    batch.items.push(...newItems);renderList();
+    for(let i=0;i<newItems.length;i+=40){batch.items.push(...newItems.slice(i,i+40));renderList();await new Promise(resolve=>setTimeout(resolve,0));}
     if(!batch.active&&newItems.length)openItem(newItems[0].id);
   }
   function beginImport(){
@@ -160,7 +202,7 @@
       const task=await api(`/api/imports/${batch.importId}`);
       $('batchImportText').textContent=`Готовим исходники · ${task.processed} из ${task.total}`;
       if(task.status==='running'){setTimeout(pollImport,700);return;}
-      endImport();addGroups(task.groups);
+      await addGroups(task.groups);endImport();
       if(task.skipped)$('batchImportNotice').textContent=`Готовые экспорты OUTMAX пропущены: ${task.skipped}.`;
       if(task.errors.length)error('Не удалось прочитать:\n'+task.errors.map(e=>e.file+': '+e.error).join('\n'));
     }catch(e){error(e.message);endImport();}
@@ -208,9 +250,9 @@
         const {file,relative}=videos[i];
         if(file.size>2*1024**3){failures.push(relative+': файл больше 2 ГБ');continue;}
         const form=new FormData();form.append('file',file);form.append('relative',relative);
-        try{ids.push((await api('/api/upload',form)).id);}catch(e){failures.push(relative+': '+e.message);}
+        try{ids.push((await prepareSource('/api/upload',form)).id);}catch(e){failures.push(relative+': '+e.message);}
       }
-      const grouped=await api('/api/batch/group',{sources:ids});endImport();addGroups(grouped.groups);
+      const grouped=await api('/api/batch/group',{sources:ids});await addGroups(grouped.groups);endImport();
       if(skipped)$('batchImportNotice').textContent=`Готовые экспорты OUTMAX пропущены: ${skipped}.`;
       if(failures.length)error('Не удалось прочитать:\n'+failures.join('\n'));
     }catch(e){error(e.message);}finally{endImport();}
@@ -226,8 +268,9 @@
     try{
       const run=await api(`/api/batches/${batch.id}`);
       let sum=0,finished=0;
+      const itemsById=new Map(batch.items.map(item=>[item.id,item]));
       for(const job of run.jobs){
-        const item=batch.items.find(i=>i.id===job.item_id);if(!item)continue;
+        const item=itemsById.get(job.item_id);if(!item)continue;
         item.status=job.status;item.progress=job.progress;item.error=job.error;
         if(['done','error','cancelled'].includes(job.status)){sum+=100;finished++;}else sum+=job.progress;
         if(job.status==='done'&&item.snapshot.result?.id!==job.id){
@@ -235,7 +278,7 @@
           if(item.id===batch.active){batch.loading=true;loadEditor(item.snapshot);batch.loading=false;}
         }
       }
-      $('batchProgress').value=sum/run.jobs.length;
+      motion.progress($('batchProgress'),sum/run.jobs.length);
       $('batchSummary').textContent=`Обработано ${finished} из ${run.jobs.length} · сохранено ${run.jobs.filter(j=>j.status==='done').length}`;
       updateRows();
       if(run.status==='running'){setTimeout(pollBatch,900);return;}
@@ -251,16 +294,17 @@
     try{
       const run=await api('/api/batch/render',{output:$('batchOutputPath').value.trim(),
         items:chosen.map(i=>({item_id:i.id,name:i.name,sources:i.snapshot.sources.map(s=>s.id),...i.snapshot.settings}))});
-      batch.id=run.id;$('batchProgress').hidden=false;$('batchProgress').value=0;
+      batch.id=run.id;$('batchProgress').hidden=false;motion.progress($('batchProgress'),0);
       $('batchCancelButton').hidden=false;$('batchCancelButton').disabled=false;pollBatch();
     }catch(e){batch.running=false;state.externalLocked=false;error(e.message);refresh();}
   }
   window.batchController={
     refreshLocks,
-    changed(){if(batch.mode&&!batch.loading){remember();renderList();if(current())detailSelectors(current());}},
+    selectAll(checked){if(locked())return;batch.items.forEach(item=>item.selected=checked&&ready(item));updateRows();},
+    changed(){if(batch.mode&&!batch.loading){remember();scheduleCurrent();}},
     completed(job){if(!batch.mode||!current())return;remember();current().status=job.status;current().error=job.error;renderList();},
-    exportContext(){return batch.mode&&current()?{folder:current().name,output:$('batchOutputPath').value.trim(),item_id:current().id}:{};},
-    folderContext(){return batch.mode?{path:$('batchOutputPath').value.trim()}:{};}
+    exportContext(){return batch.mode&&current()?{folder:current().name,output:$('batchOutputPath').value.trim(),item_id:current().id}:{output:$('batchOutputPath').value.trim()};},
+    folderContext(){return {path:$('batchOutputPath').value.trim()};}
   };
   $('singleMode').onclick=()=>switchMode(false);$('batchMode').onclick=()=>switchMode(true);
   $('importFolderButton').onclick=e=>{e.stopPropagation();chooseInput();};

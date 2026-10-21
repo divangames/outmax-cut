@@ -16,7 +16,7 @@ import numpy as np
 
 FPS = 30
 SIZE = 1080
-REFERENCE_FRAMES = 676
+REFERENCE_FRAMES = 685
 REFERENCE_BITRATE = 1_064_741
 DEFAULT_BITRATE_KBPS = 2500
 MIN_BITRATE_KBPS = 500
@@ -121,7 +121,7 @@ def template_segments(durations):
     recipe = [
         (0, 28, 93, 65), (0, 93, 130, 37), (0, 130, 152.5, 15),
         (0, 153, 188, 35), (0, 188, 204.5, 11), (0, 204, 318, 114),
-        (1, .5, 465.5, 372), (0, 5, 31, 26),
+        (1, .5, 476.75, 381), (0, 5, 31, 26),
     ]
     return [dict(source=s, start=a / 30 * durations[s] / [MODEL_SECONDS, HANDS_SECONDS][s],
                  end=b / 30 * durations[s] / [MODEL_SECONDS, HANDS_SECONDS][s],
@@ -183,7 +183,7 @@ def smart_segments(paths, sensitivity, cancel):
     result = []
     for s, path in enumerate(paths):
         ranges = active_intervals(path, sensitivity, cancel)
-        budget = [277, 372][s]
+        budget = [277, 381][s]
         total = sum(b-a for a, b in ranges)
         # Largest-remainder allocation keeps the exact frame count.
         weights = np.array([(b-a)/total*budget for a, b in ranges])
@@ -285,9 +285,9 @@ def render(sources, infos, settings, work, output, progress, cancel):
                                  (seg["end"]-seg["start"])*i/seg["frames"]))
         assert len(timeline) == REFERENCE_FRAMES - 1
         transitions = {}
-        # Reference transitions: 9.267–10.033 and 21.5–22.167 s.
+        # Reference transitions: 9.267–10.033 and 21.8–22.467 s.
         # Preserve the total duration; sample source handles around each boundary.
-        for boundary, length, lead in [(277, 23, 0), (649, 20, 5)]:
+        for boundary, length, lead in [(277, 23, 0), (658, 20, 5)]:
             if settings["transition"] != "cut":
                 for j in range(length):
                     at = boundary - lead + j

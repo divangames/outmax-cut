@@ -7,7 +7,7 @@ const mb = n => (n / 1e6).toLocaleString('ru-RU', {maximumFractionDigits: 2});
 function updateBitrateMetrics() {
   const bitrate = +$('bitrate').value;
   $('bitrateMetric').textContent = bitrate.toLocaleString('ru-RU');
-  $('sizeMetric').textContent = mb((bitrate + 64) * 1000 * (676 / 30) / 8);
+  $('sizeMetric').textContent = mb((bitrate + 64) * 1000 * (685 / 30) / 8);
 }
 $('bitrate').addEventListener('change', () => {updateBitrateMetrics(); markChanged();});
 updateBitrateMetrics();
@@ -21,6 +21,20 @@ async function api(path, body) {
   try { data = await res.json(); } catch { throw new Error('Сервис недоступен. Перезапустите приложение.'); }
   if (!res.ok) throw new Error(data.error || `Ошибка сервиса (${res.status}).`);
   return data;
+}
+async function prepareSource(path, body) {
+  const task=await api(path,body);
+  if(task.source===null)return null;
+  if(task.info)return task; // Also accepts sources from older local servers.
+  for(;;){
+    const result=await api(`/api/imports/${task.id}`);
+    if(result.status!=='running'){
+      const source=result.groups.flatMap(group=>group.candidates)[0];
+      if(!source)throw new Error(result.errors[0]?.error||'Импорт отменён.');
+      return source;
+    }
+    await new Promise(resolve=>setTimeout(resolve,250));
+  }
 }
 function showError(message) { $('errorMessage').textContent = message; $('errorMessage').hidden = !message; }
 function markChanged() {
@@ -59,8 +73,8 @@ async function upload(slot, file, native = false) {
   refresh();
   try {
     let source;
-    if (native) { source = (await api('/api/choose-source', {})).source; if (!source) { status.textContent = ''; return; } }
-    else { const body = new FormData(); body.append('file', file); source = await api('/api/upload', body); }
+    if (native) { source = await prepareSource('/api/choose-source', {}); if (!source) { status.textContent = ''; return; } }
+    else { const body = new FormData(); body.append('file', file); source = await prepareSource('/api/upload', body); }
     state.sources[slot] = source;
     $('drop'+slot).hidden = true; $('loaded'+slot).hidden = false; $('cropControl'+slot).hidden = false;
     $('name'+slot).textContent = source.name;
@@ -86,13 +100,14 @@ for (let slot=0; slot<2; slot++) {
   $('crop'+slot).addEventListener('input', () => {
     $('cropValue'+slot).textContent = `${Math.round(+$('crop'+slot).value)}%`;
     $('sourceVideo'+slot).style.objectPosition = `50% ${$('crop'+slot).value}%`;
+    if($('mainVideo').dataset.sourceSlot===String(slot))$('mainVideo').style.objectPosition=`50% ${$('crop'+slot).value}%`;
     markChanged();
   });
 }
 document.querySelectorAll('.replace').forEach(b => b.addEventListener('click', () => $('file'+b.dataset.slot).click()));
 $('mode').addEventListener('change', () => {
   const smart = $('mode').value === 'smart';
-  $('smartOptions').hidden = !smart;
+  motion.visible($('smartOptions'),smart);
   $('modeHelp').textContent = smart ? 'Находит движение, убирает длинные остановки и подгоняет ролик под длительность эталона.' : 'Точки монтажа и ускорения из проекта Premiere. Для видео с похожим порядком движений.';
   markChanged();
 });
@@ -108,13 +123,15 @@ $('transition').addEventListener('change', () => {
 function selectTab(result) {
   if (result && !state.result) return;
   $('mainVideo').pause();
-  $('mainVideo').src = result ? `/result/${state.result.id}` : '/reference';
+  $('mainVideo').onloadeddata=null;delete $('mainVideo').dataset.sourceSlot;$('mainVideo').style.objectFit='contain';
+  const videoPath=result ? `/result/${state.result.id}` : '/reference';
+  if($('mainVideo').getAttribute('src')!==videoPath){$('mainVideo').src=videoPath;motion.reveal($('viewer'));}
   $('mainVideo').setAttribute('aria-label', result ? 'Готовое видео' : 'Видео эталона');
   $('referenceTab').setAttribute('aria-selected', String(!result));
   $('resultTab').setAttribute('aria-selected', String(result));
   $('viewerLabel').textContent = result ? (state.stale ? 'Предыдущая версия · нужен новый монтаж' : 'Ваш готовый ролик') : 'Оригинальный ролик';
-  $('videoDuration').textContent = result ? '00:22.53' : '00:21.93';
-  $('videoSize').textContent = result ? `${mb(state.result.report.result.size)} МБ` : '2,95 МБ';
+  $('videoDuration').textContent = result ? '00:22.83' : '00:22.83';
+  $('videoSize').textContent = result ? `${mb(state.result.report.result.size)} МБ` : '2,99 МБ';
 }
 $('referenceTab').onclick = () => selectTab(false);
 $('resultTab').onclick = () => selectTab(true);
@@ -123,12 +140,14 @@ document.querySelectorAll('[role=tab]').forEach(button => button.addEventListene
     e.preventDefault(); const result = e.key==='ArrowRight'; selectTab(result); $(result?'resultTab':'referenceTab').focus();
   }
 }));
-$('mainVideo').addEventListener('loadedmetadata', () => { if (!state.result || $('referenceTab').getAttribute('aria-selected')==='true') $('mainVideo').currentTime = 2; });
+const seekReference=()=>{if($('mainVideo').getAttribute('src')==='/reference' && $('mainVideo').readyState>=1)$('mainVideo').currentTime=Math.min(2,$('mainVideo').duration/2);};
+$('mainVideo').addEventListener('loadedmetadata',seekReference);
+seekReference();
 async function pollJob() {
   try {
     const job = await api(`/api/jobs/${state.job}`);
     showError('');
-    $('progressBar').value = job.progress;
+    motion.progress($('progressBar'),job.progress);
     $('progressValue').textContent = `${job.progress}%`;
     $('progressStage').textContent = job.stage;
     $('stageText').textContent = job.stage;
@@ -141,7 +160,7 @@ async function pollJob() {
       $('resultTab').disabled = false;
       $('resultActions').hidden = false;
       $('outputPath').textContent = job.output;
-      $('successText').textContent = `Сохранено · ${mb(job.report.result.size)} МБ · 22,53 с`;
+      $('successText').textContent = `Сохранено · ${mb(job.report.result.size)} МБ · 22,83 с`;
       selectTab(true);
     } else if (job.status === 'error') showError(job.error);
     else showError('Экспорт отменён. Можно запустить заново.');
@@ -167,7 +186,7 @@ $('renderButton').onclick = async () => {
     state.job = job.id;
     $('mainVideo').pause();
     $('renderOverlay').hidden = false; $('progressArea').hidden = false; $('resultActions').hidden = true;
-    $('progressBar').value = 0; $('progressValue').textContent = '0%';
+    motion.progress($('progressBar'),0); $('progressValue').textContent = '0%';
     $('cancelButton').disabled = false; $('cancelButton').textContent = 'Отменить экспорт';
     pollJob();
   } catch(error) {state.running=false; showError(error.message); refresh();}
@@ -186,9 +205,9 @@ $('saveButton').onclick = async () => {
   } catch(error) {showError(error.message);}
 };
 $('folderButton').onclick = async () => {try {await api('/api/folder',window.batchController?.folderContext()||{});} catch(error){showError(error.message);}};
-$('helpButton').onclick = () => $('helpDialog').showModal();
-$('closeHelp').onclick = () => $('helpDialog').close();
-$('helpDialog').addEventListener('click', e => {if(e.target===$('helpDialog')) {const r=$('helpDialog').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)$('helpDialog').close();}});
+$('helpButton').onclick = () => motion.openDialog($('helpDialog'));
+$('closeHelp').onclick = () => motion.closeDialog($('helpDialog'));
+$('helpDialog').addEventListener('click', e => {if(e.target===$('helpDialog')) {const r=$('helpDialog').getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)motion.closeDialog($('helpDialog'));}});
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => e.preventDefault());
 refresh();
@@ -208,7 +227,7 @@ function loadEditor(snapshot) {
     if(source){
       $('name'+i).textContent=source.name;
       $('meta'+i).textContent=`${source.info.duration.toFixed(1)} с · ${source.info.width} × ${source.info.height}`;
-      video.src=source.preview;video.onloadedmetadata=()=>{video.currentTime=Math.min(3,video.duration/2);};
+      if(video.getAttribute('src')!==source.preview)video.src=source.preview;video.onloadedmetadata=()=>{video.currentTime=Math.min(3,video.duration/2);};
     }else{video.removeAttribute('src');video.load();}
     $('crop'+i).value=snapshot.settings.crops[i]*100;
     $('cropValue'+i).textContent=`${Math.round(snapshot.settings.crops[i]*100)}%`;
@@ -223,12 +242,12 @@ function loadEditor(snapshot) {
   $('transitionHelp').textContent={lens:'Мягкий Lens Blur между планами.',morph:'Оптический поток. На разных ракурсах возможны искажения.',cut:'Мгновенная смена планов.'}[snapshot.settings.transition];
   $('resultTab').disabled=!state.result;$('resultActions').hidden=!state.result||state.stale;
   $('renderOverlay').hidden=true;$('progressArea').hidden=true;showError('');
-  if(state.result){$('outputPath').textContent=state.result.output;$('successText').textContent=`Сохранено · ${mb(state.result.report.result.size)} МБ · 22,53 с`;}
+  if(state.result){$('outputPath').textContent=state.result.output;$('successText').textContent=`Сохранено · ${mb(state.result.report.result.size)} МБ · 22,83 с`;}
   selectTab(!!state.result);refresh();
 }
 
-$('settingsButton').onclick = () => $('settingsDialog').showModal();
-$('closeSettings').onclick = () => $('settingsDialog').close();
+$('settingsButton').onclick = () => motion.openDialog($('settingsDialog'));
+$('closeSettings').onclick = () => motion.closeDialog($('settingsDialog'));
 $('saveProcessingLog').disabled = true;
 api('/api/config').then(config => {
   nativeApp = config.native;

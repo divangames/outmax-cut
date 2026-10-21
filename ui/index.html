@@ -46,7 +46,7 @@
         <div><h2>Очередь роликов <span id="batchCount">0</span></h2><p>Определение ролей — подсказка. Проверьте кадры; поменять файлы местами можно в один клик.</p></div>
         <div class="batch-tools"><button id="generalSettingsButton" class="secondary-button" disabled>Общие настройки</button><button id="selectAllButton" class="text-button">Выбрать все готовые</button></div>
       </div>
-      <div id="batchList" class="batch-list"><p class="batch-empty">Добавьте папки — здесь появятся ролики и их исходники.</p></div>
+      <div id="batchList" class="batch-list" tabindex="0" role="region" aria-label="Очередь роликов"><p class="batch-empty">Добавьте папки — здесь появятся ролики и их исходники.</p></div>
       <div class="batch-output">
         <label for="batchOutputPath">Папка для готовых роликов</label>
         <div class="output-picker"><input id="batchOutputPath" type="text" placeholder="Выберите папку экспорта"><button id="chooseOutputButton" class="secondary-button">Выбрать…</button><button id="openBatchFolder" class="text-button">Открыть</button></div>
@@ -120,11 +120,11 @@
             <h3 id="stageTitle">Собираем ваш ролик</h3><p id="stageText">Исходники остаются на компьютере.</p>
           </div>
         </div>
-        <div class="video-spec"><span id="videoDuration">00:21.93</span><span id="videoSize">2,95 МБ</span><span>MP4 / H.264</span><span>Без звука</span></div>
-        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 12,4 секунды, финал 0,87 секунды">
-          <div class="timeline-label"><h3>Сценарий ролика</h3><span>22,53 с</span></div>
-          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>12,40 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
-          <div class="timeline-times"><span>0:00</span><span>0:10</span><span>0:22</span></div>
+        <div class="video-spec"><span id="videoDuration">00:22.83</span><span id="videoSize">2,99 МБ</span><span>MP4 / H.264</span><span>Без звука</span></div>
+        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 12,7 секунды, финал 0,87 секунды">
+          <div class="timeline-label"><h3>Сценарий ролика</h3><span>22,83 с</span></div>
+          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>12,70 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
+          <div class="timeline-times"><span>0:00</span><span>0:10</span><span>0:23</span></div>
         </div>
         <div class="export-area">
           <div class="export-summary"><strong>Готово для карточки товара</strong><span>1080 × 1080 · 30 кадров/с</span></div>
@@ -179,13 +179,15 @@
   <dialog id="helpDialog" aria-labelledby="helpTitle">
     <h2 id="helpTitle">Из двух исходников — в готовый ролик</h2>
     <ol><li>Добавьте модель на ногах и демонстрацию в руках. Порядок задают подписанные поля.</li><li>Проверьте квадратный кадр. Ползунок сдвигает его выше или ниже.</li><li>Для похожей съёмки оставьте тайминг эталона. Для других дублей выберите удаление пауз.</li><li>Нажмите «Собрать видео». После обработки посмотрите результат и сохраните его.</li></ol>
-    <p>Шаблон сохраняет длительность 22,53 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
+    <p>Шаблон сохраняет длительность 22,83 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
     <p>Исходный проект использует Film Impact Lens Blur. Здесь — самостоятельное приближение эффекта. Морфинг доступен отдельно; на сильно разных планах возможны искажения.</p>
     <p>В пакетном режиме добавьте общую папку с подпапками товаров. В каждой ожидаются два видео. Нажмите на товар, чтобы просмотреть исходники и изменить его настройки. Если файлов больше двух — выберите пару из списков. Очередь экспортируется в выбранную папку по одному ролику; ошибка одного товара не останавливает остальные.</p>
     <button class="primary-button" id="closeHelp">Понятно</button>
   </dialog>
+  <script src="/ui/motion.js" defer></script>
   <script src="/ui/app.js" defer></script>
   <script src="/ui/batch.js" defer></script>
+  <script src="/ui/layout.js" defer></script>
   <script src="/ui/updates.js" defer></script>
 </body>
 </html>

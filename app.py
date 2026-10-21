@@ -20,6 +20,8 @@ import uuid
 import webbrowser
 import cv2
 
+cv2.setNumThreads(2)  # Leave CPU capacity for WebView and input while importing/exporting.
+
 from flask import Flask, jsonify, request, send_file, abort
 from waitress import create_server
 
@@ -43,6 +45,7 @@ jobs = {}
 imports = {}
 batches = {}
 lock = threading.Lock()
+import_slots = threading.Semaphore(2)
 window = None
 shell_paths = []
 shell_updated = 0
@@ -213,9 +216,8 @@ def upload():
     path = folder / ("source" + ext)
     try:
         incoming.save(path)
-        entry = register_source(path, folder, Path(incoming.filename).name,
-                                request.form.get("relative"))
-        return jsonify(public_source(entry))
+        return start_import([(path, request.form.get("relative") or Path(incoming.filename).name)],
+                            display_names={path: Path(incoming.filename).name})
     except Exception as exc:
         logging.exception("Upload failed")
         shutil.rmtree(folder, ignore_errors=True)
@@ -235,7 +237,7 @@ def choose_source():
     folder.mkdir()
     try:
         path = Path(selected[0])
-        return jsonify(source=public_source(register_source(path, folder, path.name)))
+        return start_import([(path, path.name)])
     except Exception as exc:
         shutil.rmtree(folder, ignore_errors=True)
         return jsonify(error=str(exc)), 400
@@ -541,7 +543,7 @@ def import_directory():
                          for path in files], skipped)
 
 
-def start_import(files, skipped=0):
+def start_import(files, skipped=0, display_names=None):
     key = uuid.uuid4().hex
     task = dict(id=key, status="running", processed=0, total=len(files), errors=[], skipped=skipped,
                 groups=[], cancel=threading.Event())
@@ -554,7 +556,10 @@ def start_import(files, skipped=0):
             folder = WORK / uuid.uuid4().hex
             folder.mkdir()
             try:
-                entry = register_source(path, folder, path.name, relative, task["cancel"])
+                with import_slots:
+                    if task["cancel"].is_set():
+                        break
+                    entry = register_source(path, folder, (display_names or {}).get(path, path.name), relative, task["cancel"])
                 entries.append(public_source(entry))
             except Exception as exc:
                 task["errors"].append(dict(file=relative, error=str(exc)))

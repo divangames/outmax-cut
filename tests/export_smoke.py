@@ -32,7 +32,7 @@ def main():
             folder = root / 'output' / article
             result = probe(folder / f'{article}.mp4')
             assert (result['width'], result['height']) == (1080, 1080)
-            assert abs(result['duration'] - 676/30) < .1
+            assert abs(result['duration'] - 685/30) < .1
             assert {p.name for p in folder.iterdir()} == {f'{article}.mp4', 'Руки + Ноги'}
             for role, (path, digest) in zip(('ноги', 'руки'), originals):
                 assert not path.exists()
