@@ -1,0 +1,6 @@
+Flask==3.1.2
+waitress==3.0.2
+numpy==2.4.1
+opencv-python==4.13.0.92
+pywebview==6.1
+pyinstaller==6.13.0

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="outmax-token" content="__TOKEN__">
+  <link rel="icon" href="/app-icon.ico">
+  <title>OUTMAX Cut — редактор товарных видео</title>
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+  <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></symbol>
+  </svg>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="OUTMAX Cut — главная"><span class="brand-mark" aria-hidden="true"></span>OUTMAX <span class="brand-sub">Cut</span></a>
+    <span class="local-note"><span class="status-dot"></span> Всё на вашем компьютере</span>
+    <button class="text-button" id="helpButton">Как это работает</button>
+  </header>
+  <main>
+    <nav class="workflow-switch" aria-label="Режим работы">
+      <button id="singleMode" aria-pressed="true">Один ролик</button>
+      <button id="batchMode" aria-pressed="false">Пакетная сборка</button>
+    </nav>
+    <section class="workspace-heading">
+      <div><h1 id="pageTitle">Два видео. Один готовый ролик.</h1><p id="pageSubtitle">Модель, детали в руках — и монтаж в стиле эталона.</p></div>
+      <div class="preset-label">Шаблон «Модель + руки»<span>1080 × 1080 · 30 кадров/с</span></div>
+    </section>
+    <section id="batchPanel" class="batch-panel" hidden aria-label="Пакетная сборка">
+      <div id="folderDrop" class="folder-drop" tabindex="0" role="button" aria-label="Добавить папки с видео">
+        <svg><use href="#i-folder"/></svg>
+        <div><strong>Перетащите папки с товарами</strong><p>Одна папка — один товар, внутри два видео. Можно добавить общую папку с подпапками.</p></div>
+        <button id="importFolderButton" class="secondary-button">Выбрать папку</button>
+        <input id="folderInput" type="file" webkitdirectory multiple hidden>
+      </div>
+      <div class="batch-import-status" id="batchImportStatus" role="status" hidden><span id="batchImportText"></span><button class="text-button" id="cancelImportButton">Остановить импорт</button></div>
+      <p id="batchImportNotice" class="field-help" role="status"></p>
+      <div class="message error" id="batchError" role="alert" hidden></div>
+      <div class="batch-toolbar">
+        <div><h2>Очередь роликов <span id="batchCount">0</span></h2><p>Определение ролей — подсказка. Проверьте кадры; поменять файлы местами можно в один клик.</p></div>
+        <button id="selectAllButton" class="text-button">Выбрать все готовые</button>
+      </div>
+      <div id="batchList" class="batch-list"><p class="batch-empty">Добавьте папки — здесь появятся ролики и их исходники.</p></div>
+      <div class="batch-output">
+        <label for="batchOutputPath">Папка для готовых роликов</label>
+        <div class="output-picker"><input id="batchOutputPath" type="text" placeholder="Выберите папку экспорта"><button id="chooseOutputButton" class="secondary-button">Выбрать…</button><button id="openBatchFolder" class="text-button">Открыть</button></div>
+        <p>Каждый товар попадёт в свою подпапку. Существующие видео не перезаписываются.</p>
+      </div>
+      <div class="batch-actions"><span id="batchSummary" role="status">Пока нет роликов для экспорта.</span><button id="batchRenderButton" class="primary-button" disabled>Собрать выбранные</button><button id="batchCancelButton" class="secondary-button" hidden>Отменить очередь</button></div>
+      <progress id="batchProgress" value="0" max="100" aria-label="Общий прогресс очереди" hidden></progress>
+    </section>
+    <section id="batchDetail" class="batch-detail" hidden>
+      <div><h2 id="batchDetailTitle">Настройки ролика</h2><p id="batchDetailNote">Настройки сохраняются отдельно для этого товара.</p></div>
+      <button id="swapDetailButton" class="secondary-button">Модель ↔ Руки</button>
+      <button id="applySettingsButton" class="text-button">Применить эти настройки ко всем</button>
+      <div class="batch-source-selects"><label>Модель<select id="batchModelSelect" aria-label="Исходник модели для выбранного ролика"></select></label><label>Руки<select id="batchHandsSelect" aria-label="Исходник рук для выбранного ролика"></select></label></div>
+    </section>
+    <div class="workspace" id="editorWorkspace">
+      <section class="controls" aria-label="Исходники и настройки">
+        <div class="section-title"><h2>Исходные видео</h2><span id="sourceCount">0 из 2</span></div>
+        <div class="source" data-slot="0">
+          <div class="source-head"><h3>Модель</h3><span>Первый план · на ногах</span></div>
+          <label class="dropzone" id="drop0" tabindex="0" role="button" aria-label="Добавить видео модели">
+            <input type="file" id="file0" accept=".mp4,.mov,.m4v,.mkv,.avi,.webm" aria-label="Видео модели">
+            <span class="upload-symbol"><svg><use href="#i-upload"/></svg></span>
+            <span><strong>Перетащите видео сюда</strong><small>или нажмите, чтобы выбрать</small></span>
+          </label>
+          <div class="source-loaded" id="loaded0" hidden>
+            <div class="source-preview"><video id="sourceVideo0" muted playsinline controls preload="metadata" aria-label="Предпросмотр видео модели"></video></div>
+            <div class="source-details"><strong id="name0"></strong><span id="meta0"></span><button class="text-button replace" data-slot="0">Заменить видео</button></div>
+          </div>
+          <div class="crop-control" id="cropControl0" hidden><label for="crop0">Кадрирование <output id="cropValue0">82%</output></label><input id="crop0" type="range" min="0" max="100" value="82.4" step=".1" aria-label="Вертикальное положение кадра модели"><div class="range-ends"><span>Выше</span><span>Ниже</span></div></div>
+          <p class="upload-status" id="uploadStatus0" role="status"></p>
+        </div>
+        <div class="source" data-slot="1">
+          <div class="source-head"><h3>Руки</h3><span>Второй план · детали</span></div>
+          <label class="dropzone" id="drop1" tabindex="0" role="button" aria-label="Добавить видео в руках">
+            <input type="file" id="file1" accept=".mp4,.mov,.m4v,.mkv,.avi,.webm" aria-label="Видео в руках">
+            <span class="upload-symbol"><svg><use href="#i-upload"/></svg></span>
+            <span><strong>Перетащите видео сюда</strong><small>или нажмите, чтобы выбрать</small></span>
+          </label>
+          <div class="source-loaded" id="loaded1" hidden>
+            <div class="source-preview"><video id="sourceVideo1" muted playsinline controls preload="metadata" aria-label="Предпросмотр видео в руках"></video></div>
+            <div class="source-details"><strong id="name1"></strong><span id="meta1"></span><button class="text-button replace" data-slot="1">Заменить видео</button></div>
+          </div>
+          <div class="crop-control" id="cropControl1" hidden><label for="crop1">Кадрирование <output id="cropValue1">50%</output></label><input id="crop1" type="range" min="0" max="100" value="50" step=".1" aria-label="Вертикальное положение кадра в руках"><div class="range-ends"><span>Выше</span><span>Ниже</span></div></div>
+          <p class="upload-status" id="uploadStatus1" role="status"></p>
+        </div>
+        <p class="formats">MOV, MP4 и другие форматы · до 2 ГБ на файл</p>
+        <div class="settings">
+          <h2>Монтаж</h2>
+          <label class="field-label" for="mode">Режим сборки</label>
+          <select id="mode"><option value="template">Тайминг эталона</option><option value="smart">Автоматически убрать паузы</option></select>
+          <p class="field-help" id="modeHelp">Точки монтажа и ускорения из проекта Premiere. Для видео с похожим порядком движений.</p>
+          <div id="smartOptions" hidden><label class="field-label" for="sensitivity">Удаление пауз <output id="sensitivityValue">40%</output></label><input id="sensitivity" type="range" min="0" max="100" value="40"><p class="field-help">По движению в кадре. Проверьте результат: неподвижная демонстрация тоже может считаться паузой.</p></div>
+          <label class="field-label" for="transition">Переход между планами</label>
+          <select id="transition"><option value="lens">Расфокусировка · как в проекте</option><option value="morph">Морфинг · оптический поток</option><option value="cut">Прямая склейка</option></select>
+          <p class="field-help" id="transitionHelp">Мягкий Lens Blur между моделью, руками и финальным фоном.</p>
+        </div>
+      </section>
+      <section class="preview-panel" aria-label="Предпросмотр и экспорт">
+        <div class="preview-heading">
+          <div class="tabs" role="tablist" aria-label="Выбор видео">
+            <button role="tab" aria-selected="true" aria-controls="viewer" id="referenceTab">Эталон</button>
+            <button role="tab" aria-selected="false" aria-controls="viewer" id="resultTab" disabled>Результат</button>
+          </div>
+          <span class="viewer-label" id="viewerLabel">Оригинальный ролик</span>
+        </div>
+        <div class="stage" id="viewer" role="tabpanel" aria-label="Видео">
+          <video id="mainVideo" src="/reference" controls playsinline preload="auto" aria-label="Видео эталона"></video>
+          <div class="stage-empty" id="renderOverlay" hidden>
+            <div class="render-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+            <h3 id="stageTitle">Собираем ваш ролик</h3><p id="stageText">Исходники остаются на компьютере.</p>
+          </div>
+        </div>
+        <div class="video-spec"><span id="videoDuration">00:21.93</span><span id="videoSize">2,95 МБ</span><span>MP4 / H.264</span><span>Без звука</span></div>
+        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 11,8 секунды, финал 0,87 секунды">
+          <div class="timeline-label"><h3>Сценарий ролика</h3><span>21,93 с</span></div>
+          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>11,80 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
+          <div class="timeline-times"><span>0:00</span><span>0:10</span><span>0:22</span></div>
+        </div>
+        <div class="export-area">
+          <div class="export-summary"><strong>Готово для карточки товара</strong><span>1080 × 1080 · 30 кадров/с</span></div>
+          <label class="field-label" for="bitrate">Битрейт видео</label>
+          <select id="bitrate" aria-describedby="bitrateHelp">
+            <option value="500">500 кбит/с</option>
+            <option value="750">750 кбит/с</option>
+            <option value="1000">1000 кбит/с</option>
+            <option value="1065">1065 кбит/с · близко к эталону</option>
+            <option value="1500">1500 кбит/с</option>
+            <option value="2000">2000 кбит/с</option>
+            <option value="2500" selected>2500 кбит/с · стандартный</option>
+          </select>
+          <dl class="export-metrics" aria-live="polite">
+            <div><dt>Видеобитрейт</dt><dd><span id="bitrateMetric">2 500</span> <small>кбит/с</small></dd></div>
+            <div><dt>Размер MP4</dt><dd>≈ <span id="sizeMetric">7,03</span> <small>МБ</small></dd></div>
+          </dl>
+          <p class="field-help" id="bitrateHelp">До 2500 кбит/с. Выше битрейт — больше деталей и размер файла. Размер приблизительный, с учётом тихой аудиодорожки.</p>
+          <button class="primary-button" id="renderButton" disabled><span>Собрать видео</span><svg><use href="#i-arrow"/></svg></button>
+          <p id="readyHint">Добавьте оба исходника, чтобы начать монтаж.</p>
+          <div id="progressArea" hidden>
+            <div class="progress-heading"><span id="progressStage">Подготовка</span><strong id="progressValue">0%</strong></div>
+            <progress id="progressBar" max="100" value="0" aria-label="Ход экспорта"></progress>
+            <button id="cancelButton" class="text-button">Отменить экспорт</button>
+          </div>
+          <div class="message error" id="errorMessage" role="alert" hidden></div>
+          <div id="resultActions" hidden>
+            <div class="success"><svg><use href="#i-check"/></svg><span id="successText">Видео готово и сохранено</span></div>
+            <div class="result-buttons"><button class="primary-button" id="saveButton">Сохранить как…</button><button class="secondary-button" id="folderButton"><svg><use href="#i-folder"/></svg>Открыть папку</button></div>
+            <p class="output-path" id="outputPath"></p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <footer><span>OUTMAX Cut <span class="version">__VERSION__</span></span><button class="text-button" id="updatesButton" aria-expanded="false" aria-controls="updatesPanel">Проверить обновления</button><span>Локальный монтаж. Без загрузки в облако.</span></footer>
+  <section id="updatesPanel" class="updates-panel" aria-label="Обновления приложения" hidden>
+    <h2>Обновления OUTMAX Cut</h2>
+    <p id="updateStatus" role="status">Проверяем GitHub Releases…</p>
+    <progress id="updateProgress" max="100" value="0" aria-label="Загрузка обновления" hidden></progress>
+    <p id="updateError" class="message error" role="alert" hidden></p>
+    <div class="update-actions"><button class="secondary-button" id="checkUpdateButton">Проверить снова</button><button class="primary-button" id="downloadUpdateButton" hidden>Скачать обновление</button><button class="primary-button" id="installUpdateButton" hidden>Установить и закрыть приложение</button><a href="https://github.com/divangames/outmax-cut/releases/latest" target="_blank" rel="noopener noreferrer">Релизы на GitHub</a></div>
+    <p class="field-help">Перед установкой завершите монтаж. Текущая очередь не сохраняется при закрытии. Готовые видео остаются на диске.</p>
+  </section>
+  <dialog id="helpDialog" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">Из двух исходников — в готовый ролик</h2>
+    <ol><li>Добавьте модель на ногах и демонстрацию в руках. Порядок задают подписанные поля.</li><li>Проверьте квадратный кадр. Ползунок сдвигает его выше или ниже.</li><li>Для похожей съёмки оставьте тайминг эталона. Для других дублей выберите удаление пауз.</li><li>Нажмите «Собрать видео». После обработки посмотрите результат и сохраните его.</li></ol>
+    <p>Шаблон сохраняет длительность 21,93 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
+    <p>Исходный проект использует Film Impact Lens Blur. Здесь — самостоятельное приближение эффекта. Морфинг доступен отдельно; на сильно разных планах возможны искажения.</p>
+    <p>В пакетном режиме добавьте общую папку с подпапками товаров. В каждой ожидаются два видео. Нажмите на товар, чтобы просмотреть исходники и изменить его настройки. Если файлов больше двух — выберите пару из списков. Очередь экспортируется в выбранную папку по одному ролику; ошибка одного товара не останавливает остальные.</p>
+    <button class="primary-button" id="closeHelp">Понятно</button>
+  </dialog>
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/batch.js" defer></script>
+  <script src="/ui/updates.js" defer></script>
+</body>
+</html>
