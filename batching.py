@@ -14,6 +14,11 @@ HANDS_WORDS = re.compile(r"(?i)(?:^|[\s_.()-])(hands?|руки|руках|руч
 
 
 def is_generated_video(path):
+    archive = path.parent / "Руки + Ноги"
+    if (path.suffix.lower() == ".mp4" and path.stem.isdecimal() and path.parent.name == path.stem
+            and archive.is_dir() and all(any(p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+                for p in archive.glob(f"{path.stem}_{role}.*")) for role in ("ноги", "руки"))):
+        return True
     manifest = path.with_suffix(".json")
     if not manifest.is_file() or manifest.stat().st_size > 1024**2:
         return False

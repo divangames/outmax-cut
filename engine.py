@@ -9,13 +9,14 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 
 import cv2
 import numpy as np
 
 FPS = 30
 SIZE = 1080
-REFERENCE_FRAMES = 658
+REFERENCE_FRAMES = 676
 REFERENCE_BITRATE = 1_064_741
 DEFAULT_BITRATE_KBPS = 2500
 MIN_BITRATE_KBPS = 500
@@ -116,11 +117,11 @@ def make_proxy(source, info, dest, cancel=None):
 
 
 def template_segments(durations):
-    # Recovered from НОГИ-РУКИ Копия.prproj. Values are source and sequence frames.
+    # Recovered from НОГИ-РУКИ НОВАЯ.prproj. Values are source and sequence frames.
     recipe = [
         (0, 28, 93, 65), (0, 93, 130, 37), (0, 130, 152.5, 15),
         (0, 153, 188, 35), (0, 188, 204.5, 11), (0, 204, 318, 114),
-        (1, 23, 465.5, 354), (0, 5, 31, 26),
+        (1, .5, 465.5, 372), (0, 5, 31, 26),
     ]
     return [dict(source=s, start=a / 30 * durations[s] / [MODEL_SECONDS, HANDS_SECONDS][s],
                  end=b / 30 * durations[s] / [MODEL_SECONDS, HANDS_SECONDS][s],
@@ -182,7 +183,7 @@ def smart_segments(paths, sensitivity, cancel):
     result = []
     for s, path in enumerate(paths):
         ranges = active_intervals(path, sensitivity, cancel)
-        budget = [277, 354][s]
+        budget = [277, 372][s]
         total = sum(b-a for a, b in ranges)
         # Largest-remainder allocation keeps the exact frame count.
         weights = np.array([(b-a)/total*budget for a, b in ranges])
@@ -264,7 +265,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
     paths = []
     readers = []
     proc = None
-    temp_output = output.with_suffix(".partial.mp4")
+    temp_output = output.with_name(f".{output.stem}.{uuid.uuid4().hex}.partial.mp4")
     try:
         for s in range(2):
             progress(4 + s * 12, f"Подготовка видео: {'модель' if s == 0 else 'руки'}")
@@ -282,11 +283,11 @@ def render(sources, infos, settings, work, output, progress, cancel):
             for i in range(seg["frames"]):
                 timeline.append((seg["source"], seg["start"] +
                                  (seg["end"]-seg["start"])*i/seg["frames"]))
-        assert len(timeline) == 657
+        assert len(timeline) == REFERENCE_FRAMES - 1
         transitions = {}
-        # Reference transitions: 9.267–10.033 and 20.9–21.567 s.
+        # Reference transitions: 9.267–10.033 and 21.5–22.167 s.
         # Preserve the total duration; sample source handles around each boundary.
-        for boundary, length, lead in [(277, 23, 0), (631, 20, 5)]:
+        for boundary, length, lead in [(277, 23, 0), (649, 20, 5)]:
             if settings["transition"] != "cut":
                 for j in range(length):
                     at = boundary - lead + j
@@ -315,7 +316,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
                     frame = transition(a, b, j/(n-1), settings["transition"])
                 proc.stdin.write(frame.tobytes())
                 if index % 10 == 0:
-                    progress(32 + 43 * (index+1)/657, "Монтаж и переходы")
+                    progress(32 + 43 * (index+1)/(REFERENCE_FRAMES - 1), "Монтаж и переходы")
             proc.stdin.close()
             proc.wait(timeout=120)
             if proc.returncode:
@@ -338,7 +339,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
         progress(88, f"Сжатие · {bitrate} кбит/с · проход 2 из 2")
         run(common + ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"] +
             encoding + ["-pass", "2", "-map", "0:v:0", "-map", "1:a:0",
-                        "-c:a", "aac", "-b:a", "64k", "-t", str(658/30),
+                        "-c:a", "aac", "-b:a", "64k", "-t", str(REFERENCE_FRAMES/FPS),
                         "-movflags", "+faststart", "-map_metadata", "-1",
                         "-color_primaries", "bt709", "-color_trc", "bt709",
                         "-colorspace", "bt709", str(temp_output)], cancel)
@@ -347,10 +348,13 @@ def render(sources, infos, settings, work, output, progress, cancel):
         result = probe(temp_output)
         if (result["width"], result["height"]) != (1080, 1080):
             raise RuntimeError("Проверка формата результата не пройдена.")
-        temp_output.replace(output)
+        if os.name == "nt":
+            temp_output.rename(output)  # Windows refuses to replace an existing file.
+        else:
+            os.link(temp_output, output)
+            temp_output.unlink()
         report = dict(generator="OUTMAX Cut", segments=segments, settings=settings, result=result,
-                      frames=658, fps=30, transition_note="Independent Lens Blur approximation / optical flow")
-        output.with_suffix(".json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+                      frames=REFERENCE_FRAMES, fps=FPS, transition_note="Independent Lens Blur approximation / optical flow")
         progress(100, "Видео готово")
         return report
     finally:

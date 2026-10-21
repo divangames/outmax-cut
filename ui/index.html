@@ -20,6 +20,7 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="OUTMAX Cut — главная"><span class="brand-mark" aria-hidden="true"></span>OUTMAX <span class="brand-sub">Cut</span></a>
     <span class="local-note"><span class="status-dot"></span> Всё на вашем компьютере</span>
+    <button class="text-button" id="settingsButton">Настройки</button>
     <button class="text-button" id="helpButton">Как это работает</button>
   </header>
   <main>
@@ -28,7 +29,7 @@
       <button id="batchMode" aria-pressed="false">Пакетная сборка</button>
     </nav>
     <section class="workspace-heading">
-      <div><h1 id="pageTitle">Два видео. Один готовый ролик.</h1><p id="pageSubtitle">Модель, детали в руках — и монтаж в стиле эталона.</p></div>
+      <div><h1 id="pageTitle">Редактор видео</h1><p id="pageSubtitle">Исходники → монтаж → экспорт</p></div>
       <div class="preset-label">Шаблон «Модель + руки»<span>1080 × 1080 · 30 кадров/с</span></div>
     </section>
     <section id="batchPanel" class="batch-panel" hidden aria-label="Пакетная сборка">
@@ -43,7 +44,7 @@
       <div class="message error" id="batchError" role="alert" hidden></div>
       <div class="batch-toolbar">
         <div><h2>Очередь роликов <span id="batchCount">0</span></h2><p>Определение ролей — подсказка. Проверьте кадры; поменять файлы местами можно в один клик.</p></div>
-        <button id="selectAllButton" class="text-button">Выбрать все готовые</button>
+        <div class="batch-tools"><button id="generalSettingsButton" class="secondary-button" disabled>Общие настройки</button><button id="selectAllButton" class="text-button">Выбрать все готовые</button></div>
       </div>
       <div id="batchList" class="batch-list"><p class="batch-empty">Добавьте папки — здесь появятся ролики и их исходники.</p></div>
       <div class="batch-output">
@@ -55,13 +56,14 @@
       <progress id="batchProgress" value="0" max="100" aria-label="Общий прогресс очереди" hidden></progress>
     </section>
     <section id="batchDetail" class="batch-detail" hidden>
-      <div><h2 id="batchDetailTitle">Настройки ролика</h2><p id="batchDetailNote">Настройки сохраняются отдельно для этого товара.</p></div>
+      <div><h2 id="batchDetailTitle">Настройки ролика</h2><p id="batchDetailNote" role="status">Настройки сохраняются отдельно для этого товара.</p></div>
       <button id="swapDetailButton" class="secondary-button">Модель ↔ Руки</button>
-      <button id="applySettingsButton" class="text-button">Применить эти настройки ко всем</button>
+      <button id="applySettingsButton" class="text-button">Применить к остальным роликам</button>
       <div class="batch-source-selects"><label>Модель<select id="batchModelSelect" aria-label="Исходник модели для выбранного ролика"></select></label><label>Руки<select id="batchHandsSelect" aria-label="Исходник рук для выбранного ролика"></select></label></div>
     </section>
     <div class="workspace" id="editorWorkspace">
       <section class="controls" aria-label="Исходники и настройки">
+        <div id="singleArticleRow"><label class="field-label" for="articleNumber">Артикул</label><input id="articleNumber" type="text" inputmode="numeric" placeholder="Например, 44238"><p class="field-help">Можно оставить пустым, если номер есть в названиях обоих файлов.</p></div>
         <div class="section-title"><h2>Исходные видео</h2><span id="sourceCount">0 из 2</span></div>
         <div class="source" data-slot="0">
           <div class="source-head"><h3>Модель</h3><span>Первый план · на ногах</span></div>
@@ -119,9 +121,9 @@
           </div>
         </div>
         <div class="video-spec"><span id="videoDuration">00:21.93</span><span id="videoSize">2,95 МБ</span><span>MP4 / H.264</span><span>Без звука</span></div>
-        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 11,8 секунды, финал 0,87 секунды">
-          <div class="timeline-label"><h3>Сценарий ролика</h3><span>21,93 с</span></div>
-          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>11,80 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
+        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 12,4 секунды, финал 0,87 секунды">
+          <div class="timeline-label"><h3>Сценарий ролика</h3><span>22,53 с</span></div>
+          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>12,40 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
           <div class="timeline-times"><span>0:00</span><span>0:10</span><span>0:22</span></div>
         </div>
         <div class="export-area">
@@ -158,6 +160,13 @@
       </section>
     </div>
   </main>
+  <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+    <h2 id="settingsTitle">Настройки</h2>
+    <label class="preference"><input type="checkbox" id="saveProcessingLog" role="switch"> Сохранять лог обработки видео</label>
+    <p>Сохраняет монтаж.txt в папке артикула. Настройка действует для следующих экспортов.</p>
+    <p id="settingsError" role="alert" hidden></p>
+    <button id="closeSettings" class="secondary-button">Закрыть</button>
+  </dialog>
   <footer><span>OUTMAX Cut <span class="version">__VERSION__</span></span><button class="text-button" id="updatesButton" aria-expanded="false" aria-controls="updatesPanel">Проверить обновления</button><span>Локальный монтаж. Без загрузки в облако.</span></footer>
   <section id="updatesPanel" class="updates-panel" aria-label="Обновления приложения" hidden>
     <h2>Обновления OUTMAX Cut</h2>
@@ -170,7 +179,7 @@
   <dialog id="helpDialog" aria-labelledby="helpTitle">
     <h2 id="helpTitle">Из двух исходников — в готовый ролик</h2>
     <ol><li>Добавьте модель на ногах и демонстрацию в руках. Порядок задают подписанные поля.</li><li>Проверьте квадратный кадр. Ползунок сдвигает его выше или ниже.</li><li>Для похожей съёмки оставьте тайминг эталона. Для других дублей выберите удаление пауз.</li><li>Нажмите «Собрать видео». После обработки посмотрите результат и сохраните его.</li></ol>
-    <p>Шаблон сохраняет длительность 21,93 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
+    <p>Шаблон сохраняет длительность 22,53 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
     <p>Исходный проект использует Film Impact Lens Blur. Здесь — самостоятельное приближение эффекта. Морфинг доступен отдельно; на сильно разных планах возможны искажения.</p>
     <p>В пакетном режиме добавьте общую папку с подпапками товаров. В каждой ожидаются два видео. Нажмите на товар, чтобы просмотреть исходники и изменить его настройки. Если файлов больше двух — выберите пару из списков. Очередь экспортируется в выбранную папку по одному ролику; ошибка одного товара не останавливает остальные.</p>
     <button class="primary-button" id="closeHelp">Понятно</button>

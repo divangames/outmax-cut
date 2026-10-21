@@ -10,6 +10,10 @@ const url=process.env.OUTMAX_URL||'http://127.0.0.1:8769';
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  try{
   await page.goto(url);
+  await page.locator('#settingsButton').click();
+  await page.locator('#saveProcessingLog').check();
+  await page.locator('#saveProcessingLog').isEnabled();
+  await page.locator('#closeSettings').click();
   await page.getByRole('button',{name:'Пакетная сборка',exact:true}).click();
   await page.locator('#folderInput').setInputFiles(path.join(root,'analysis/batch-fixtures/Товары'));
   await page.waitForFunction(()=>document.querySelectorAll('.batch-row').length===3,{},{timeout:180000});
@@ -48,11 +52,11 @@ const url=process.env.OUTMAX_URL||'http://127.0.0.1:8769';
   await page.locator('#batchCancelButton').waitFor({state:'hidden',timeout:360000});
   assert.match(await page.locator('#batchSummary').textContent(),/Сохранено 2 роликов/);
   for(const sku of ['SKU-001','SKU-002']){
-    const folder=path.join(root,'analysis/batch-output/Товары',sku);
-    const reports=fs.readdirSync(folder).filter(f=>f.endsWith('.json'));
+    const folder=path.join(root,'analysis/batch-output',sku.replace('SKU-',''));
+    const reports=fs.readdirSync(folder).filter(f=>f==='монтаж.txt');
     assert(reports.length>=1);
     const report=JSON.parse(fs.readFileSync(path.join(folder,reports.at(-1)),'utf8'));
-    assert.equal(report.frames,658);
+    assert.equal(report.frames,676);
     if(sku==='SKU-001'){assert.equal(report.settings.transition,'cut');assert.equal(report.settings.crops[0],.72);}
     else{assert.equal(report.settings.mode,'smart');assert.equal(report.settings.crops[1],.35);}
   }

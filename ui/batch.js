@@ -21,6 +21,8 @@
     ['singleMode','batchMode'].forEach(id=>$(id).disabled=editLocked);
     ['swapDetailButton','applySettingsButton','batchModelSelect','batchHandsSelect'].forEach(id=>$(id).disabled=editLocked);
     ['chooseOutputButton','batchOutputPath','selectAllButton'].forEach(id=>$(id).disabled=editLocked);
+    $('generalSettingsButton').disabled=editLocked||!batch.items.length;
+    $('applySettingsButton').disabled=editLocked||batch.items.length<2;
     $('importFolderButton').disabled=editLocked;
     $('folderDrop').setAttribute('aria-disabled',String(editLocked));
     document.querySelectorAll('.batch-row [data-edit]').forEach(el=>el.disabled=editLocked);
@@ -35,8 +37,9 @@
     else{remember();batch.mode=false;}
     $('singleMode').setAttribute('aria-pressed',String(!enabled));$('batchMode').setAttribute('aria-pressed',String(enabled));
     $('batchPanel').hidden=!enabled;
-    $('pageTitle').textContent=enabled?'Папки на входе. Ролики на выходе.':'Два видео. Один готовый ролик.';
-    $('pageSubtitle').textContent=enabled?'Проверьте пары, настройте каждый товар и запустите очередь.':'Модель, детали в руках — и монтаж в стиле эталона.';
+    $('pageTitle').textContent=enabled?'Пакетная обработка':'Редактор видео';
+    $('singleArticleRow').hidden=enabled;
+    $('pageSubtitle').textContent=enabled?'Проверьте пары, настройте каждый товар и запустите очередь.':'Исходники → монтаж → экспорт';
     if(enabled){
       if(batch.active){batch.loading=true;openItem(batch.active);batch.loading=false;}else {$('editorWorkspace').hidden=true;$('batchDetail').hidden=true;}
     }else{
@@ -186,7 +189,14 @@
       }catch{}
     }
     const allVideos=files.filter(item=>/\.(mp4|mov|m4v|mkv|avi|webm)$/i.test(item.file.name));
-    const videos=allVideos.filter(item=>!generated.has(item.relative.replace(/\.[^.]+$/,'').toLowerCase()));
+    const videos=allVideos.filter(item=>{
+      const parts=item.relative.replaceAll('\\','/').split('/');
+      const match=/^([0-9]+)\.mp4$/i.exec(item.file.name);
+      const archive=parts.slice(0,-1).join('/')+'/Руки + Ноги/';
+      const articleExport=match&&parts.at(-2)===match[1]&&['ноги','руки'].every(role=>
+        allVideos.some(candidate=>candidate.relative.replaceAll('\\','/').startsWith(archive+match[1]+'_'+role+'.')));
+      return !articleExport&&!generated.has(item.relative.replace(/\.[^.]+$/,'').toLowerCase());
+    });
     const skipped=allVideos.length-videos.length;
     if(!videos.length){error('В папках нет исходных видео. Готовые экспорты OUTMAX пропускаются.');endImport();return;}
     if(videos.length>1000){error('За один импорт можно добавить до 1000 видео.');endImport();return;}
@@ -285,11 +295,17 @@
     if(chosen&&item.snapshot.sources[1-i]?.id===chosen.id)item.snapshot.sources[1-i]=null;
     item.snapshot.sources[i]=chosen;changedItem(item);
   };
+  $('generalSettingsButton').onclick=()=>{
+    if(locked()||!batch.items.length)return;
+    openAndView(current()?.id||batch.items[0].id);
+    $('batchDetailNote').textContent='Задайте параметры ниже и нажмите «Применить к остальным роликам». Будут скопированы режим, переход, кадрирование, удаление пауз и битрейт для всех товаров очереди.';
+  };
   $('applySettingsButton').onclick=()=>{
     if(locked()||!current())return;remember();const settings=structuredClone(current().snapshot.settings);
-    for(const item of batch.items){item.snapshot.settings=structuredClone(settings);item.snapshot.stale=!!item.snapshot.result;item.status='changed';}
+    const others=batch.items.filter(item=>item.id!==batch.active);
+    for(const item of others){item.snapshot.settings=structuredClone(settings);item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
     batch.loading=true;loadEditor(current().snapshot);batch.loading=false;renderList();
-    $('batchDetailNote').textContent='Настройки этого ролика применены ко всей очереди. Порядок исходников сохранён.';
+    $('batchDetailNote').textContent=`Настройки применены к остальным роликам: ${others.length}. Режим, переход, кадрирование, удаление пауз и битрейт скопированы.`;
   };
   $('batchRenderButton').onclick=exportSelected;
   $('batchCancelButton').onclick=async()=>{

@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import uuid
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +15,7 @@ from version import VERSION
 
 def main():
     source = ROOT / "dist" / VERSION / "OUTMAX-Cut"
-    target = ROOT / "analysis" / "Дизайнер" / "Программа"
+    target = ROOT / "analysis" / ("Проверка-" + uuid.uuid4().hex[:8]) / "Программа"
     shutil.copytree(source, target, copy_function=os.link, dirs_exist_ok=False)
     profile = target.parent / "Профиль"
     profile.mkdir(exist_ok=True)

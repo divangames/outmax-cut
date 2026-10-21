@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -31,8 +32,7 @@ BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "OutmaxCut"
 BASE.mkdir(parents=True, exist_ok=True)
 WORK = BASE / "work" / uuid.uuid4().hex
 WORK.mkdir(parents=True, exist_ok=True)
-OUTPUT = Path.home() / "Videos" / "OUTMAX"
-OUTPUT.mkdir(parents=True, exist_ok=True)
+OUTPUT = Path.home() / "Desktop" / "Готовые видео"
 logging.basicConfig(filename=str(BASE / "app.log"), level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
 app = Flask(__name__, static_folder=str(RESOURCES / "ui"), static_url_path="/ui")
@@ -49,6 +49,36 @@ shell_updated = 0
 updater = Updater(BASE / "updates")
 installing_update = False
 active_requests = 0
+SETTINGS_FILE = BASE / "settings.json"
+
+
+def load_preferences():
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return {"save_processing_log": data.get("save_processing_log") is True}
+    except (OSError, ValueError, AttributeError):
+        return {"save_processing_log": False}
+
+
+preferences = load_preferences()
+
+
+@app.post("/api/settings")
+def save_preferences():
+    data = request.get_json(silent=True) or {}
+    value = data.get("save_processing_log")
+    if not isinstance(value, bool):
+        return jsonify(error="Настройка должна быть включена или выключена."), 400
+    try:
+        with lock:
+            updated = {"save_processing_log": value}
+            temporary = SETTINGS_FILE.with_suffix(".tmp")
+            temporary.write_text(json.dumps(updated), encoding="utf-8")
+            temporary.replace(SETTINGS_FILE)
+            preferences.update(updated)
+        return jsonify(updated)
+    except OSError as exc:
+        return jsonify(error=str(exc)), 400
 
 
 @app.before_request
@@ -98,7 +128,7 @@ def index():
 
 @app.get("/api/config")
 def config():
-    return jsonify(output=str(OUTPUT), version=VERSION, native=window is not None,
+    return jsonify(output=str(OUTPUT), preferences=preferences, version=VERSION, native=window is not None,
                    can_install_update=window is not None and getattr(sys, "frozen", False))
 
 
@@ -192,6 +222,25 @@ def upload():
         return jsonify(error=str(exc)), 400
 
 
+@app.post("/api/choose-source")
+def choose_source():
+    if window is None:
+        return jsonify(error="Выбор доступен в Windows-приложении."), 400
+    import webview
+    selected = window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False,
+        file_types=("Видео (*.mp4;*.mov;*.m4v;*.mkv;*.avi;*.webm)",))
+    if not selected:
+        return jsonify(source=None)
+    folder = WORK / uuid.uuid4().hex
+    folder.mkdir()
+    try:
+        path = Path(selected[0])
+        return jsonify(source=public_source(register_source(path, folder, path.name)))
+    except Exception as exc:
+        shutil.rmtree(folder, ignore_errors=True)
+        return jsonify(error=str(exc)), 400
+
+
 @app.get("/media/<key>")
 def media(key):
     with lock:
@@ -241,30 +290,95 @@ def busy():
     return any(j["status"] in ("running", "queued") for j in jobs.values())
 
 
+def article_number(data):
+    explicit = str(data.get("article") or "").strip()
+    if explicit:
+        if not re.fullmatch(r"[0-9]+", explicit):
+            raise ValueError("Артикул должен содержать только цифры.")
+        return explicit
+    folder = str(data.get("folder") or "").replace("\\", "/")
+    parts = [part for part in folder.split("/") if part and part != "Руки + Ноги"]
+    if parts:
+        numbers = re.findall(r"(?<![0-9])[0-9]+(?![0-9])", parts[-1])
+        if len(numbers) == 1:
+            return numbers[0]
+    candidates = [set(re.findall(r"[0-9]+", Path(sources[key]["name"]).stem))
+                  for key in data["sources"]]
+    common = candidates[0] & candidates[1]
+    if len(common) == 1:
+        return common.pop()
+    parents = {sources[key]["path"].parent.name for key in data["sources"]}
+    if len(parents) == 1 and re.fullmatch(r"[0-9]+", next(iter(parents))):
+        return parents.pop()
+    raise ValueError("Не удалось определить артикул. Укажите номер артикула или назовите папку его номером.")
+
+
 def output_path(data, key):
-    if data.get("folder"):
-        base = Path(str(data.get("output") or OUTPUT)).expanduser()
-        if not base.is_absolute():
-            raise ValueError("Укажите абсолютный путь к папке экспорта.")
-        base = base.resolve()
-        dest = (base / safe_folder(data["folder"])).resolve()
-        if not dest.is_relative_to(base):
-            raise ValueError("Недопустимая папка экспорта.")
-        dest.mkdir(parents=True, exist_ok=True)
-        used = {str(j["output"]).casefold() for j in jobs.values()}
-        filename, index = dest / "Монтаж.mp4", 1
-        while filename.exists() or str(filename).casefold() in used:
-            index += 1
-            filename = dest / f"Монтаж_{index}.mp4"
-        return filename
-    original = sources[data["sources"][0]]["name"]
-    stem = safe_folder(Path(original).stem).name + "_модель+ноги"
-    filename, index = OUTPUT / f"{stem}.mp4", 1
-    used = {str(j["output"]).casefold() for j in jobs.values()}
-    while filename.exists() or filename.with_suffix(".json").exists() or str(filename).casefold() in used:
-        index += 1
-        filename = OUTPUT / f"{stem}_{index}.mp4"
+    article = article_number(data)
+    base = Path(str(data.get("output") or OUTPUT)).expanduser()
+    if not base.is_absolute():
+        raise ValueError("Укажите абсолютный путь к папке экспорта.")
+    base = base.resolve()
+    dest = base if base.name == article else base / article
+    if not dest.resolve().is_relative_to(base):
+        raise ValueError("Недопустимая папка экспорта.")
+    filename = dest / f"{article}.mp4"
+    used = {str(j["output"]).casefold() for j in jobs.values()
+            if j["status"] in ("running", "queued")}
+    if filename.exists() or str(filename).casefold() in used:
+        raise ValueError(f"Файл уже существует или поставлен в очередь: {filename}. Переместите его перед повторным экспортом.")
     return filename
+
+
+def archive_targets(job):
+    folder = job["output"].parent / "Руки + Ноги"
+    if folder.is_symlink() or not folder.resolve().is_relative_to(job["output"].parent.resolve()):
+        raise ValueError("Недопустимая папка исходников.")
+    return [(sources[key], folder / f"{job['output'].stem}_{role}{sources[key]['path'].suffix.lower()}")
+            for key, role in zip(job["source_ids"], ("ноги", "руки"))]
+
+
+def check_archive(job):
+    targets = archive_targets(job)
+    for source, target in targets:
+        if not source["path"].is_file():
+            raise ValueError(f"Исходник не найден: {source['path']}")
+        if target.exists() and source["path"].resolve() != target.resolve():
+            raise ValueError(f"Исходник уже существует: {target}")
+    if job["save_processing_log"] and (job["output"].parent / "монтаж.txt").exists():
+        raise ValueError("Лог монтаж.txt уже существует. Переместите его перед экспортом.")
+    return targets
+
+
+def archive_sources(job):
+    targets = check_archive(job)
+    created = []
+    folder = targets[0][1].parent
+    folder.mkdir(exist_ok=True)
+    try:
+        # Copy every source exclusively before deleting any original. Works across disks.
+        for source, target in targets:
+            if source["path"].resolve() == target.resolve():
+                continue
+            with target.open("xb") as out:
+                created.append(target)
+                with source["path"].open("rb") as incoming:
+                    shutil.copyfileobj(incoming, out)
+            shutil.copystat(source["path"], target)
+    except Exception:
+        for target in created:
+            target.unlink(missing_ok=True)
+        if not any(folder.iterdir()):
+            folder.rmdir()
+        raise
+    # All copies are complete; on a deletion failure retain the archive and remaining originals.
+    for source, target in targets:
+        original = source["path"]
+        if original.resolve() != target.resolve():
+            original.unlink()
+            for entry in sources.values():
+                if entry["path"] == original:
+                    entry["path"] = target
 
 
 def create_job(data, status="running"):
@@ -272,12 +386,13 @@ def create_job(data, status="running"):
     ids = data.get("sources", [])
     if len(ids) != 2 or any(s not in sources for s in ids):
         raise ValueError("Добавьте видео «Модель» и «Руки».")
-    if ids[0] == ids[1]:
+    if ids[0] == ids[1] or sources[ids[0]]["path"].resolve() == sources[ids[1]]["path"].resolve():
         raise ValueError("Модель и руки должны быть разными файлами.")
     key = uuid.uuid4().hex
     job = dict(id=key, status=status, progress=0, stage="В очереди" if status == "queued" else "Начинаем",
                cancel=threading.Event(), output=output_path(data, key),
-               settings=settings, source_ids=list(ids), item_id=data.get("item_id"))
+               settings=settings, source_ids=list(ids), item_id=data.get("item_id"),
+               save_processing_log=preferences["save_processing_log"])
     jobs[key] = job
     return job
 
@@ -289,13 +404,20 @@ def execute_job(job):
     def progress(value, stage):
         with lock:
             job.update(progress=round(value), stage=stage)
+    destination_existed = job["output"].parent.exists()
     try:
         if job["cancel"].is_set():
             raise Cancelled()
         with lock:
             job.update(status="running")
+        check_archive(job)
+        job["output"].parent.mkdir(parents=True, exist_ok=True)
         report = render([s["path"] for s in selected], [s["info"] for s in selected],
                         job["settings"], folder, job["output"], progress, job["cancel"])
+        archive_sources(job)
+        if job["save_processing_log"]:
+            with (job["output"].parent / "монтаж.txt").open("x", encoding="utf-8") as log:
+                json.dump(report, log, ensure_ascii=False, indent=2)
         with lock:
             job.update(status="done", report=report)
     except Cancelled:
@@ -304,7 +426,14 @@ def execute_job(job):
     except Exception as exc:
         logging.exception("Render failed")
         with lock:
-            job.update(status="error", error=str(exc), stage="Не удалось собрать видео")
+            job.update(status="error", error=str(exc), stage=("Видео сохранено; ошибка организации файлов"
+                       if job["output"].exists() else "Не удалось собрать видео"))
+    finally:
+        if not destination_existed and job["output"].parent.is_dir():
+            try:
+                job["output"].parent.rmdir()  # Only remove a newly created, empty destination.
+            except OSError:
+                pass
 
 
 def job_view(job):
@@ -517,11 +646,16 @@ def render_batch():
             if busy():
                 return jsonify(error="Уже выполняется экспорт."), 409
             # Validate every row before creating any jobs.
+            used_sources = set()
             for item in items:
                 validate_settings(item)
                 ids = item.get("sources", [])
                 if len(ids) != 2 or ids[0] == ids[1] or any(s not in sources for s in ids):
                     raise ValueError("У каждого выбранного ролика должны быть два разных исходника.")
+                paths = {sources[key]["path"].resolve() for key in ids}
+                if len(paths) != 2 or used_sources & paths:
+                    raise ValueError("Каждый исходный файл можно использовать только в одном артикуле очереди.")
+                used_sources.update(paths)
             selected = []
             try:
                 for item in items:

@@ -2,11 +2,12 @@ const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="outmax-token"]').content;
 const state = {sources: [null, null], uploading: [false, false], job: null, running: false, result: null, stale: false, externalLocked: false};
 let pollTimer;
+let nativeApp = false;
 const mb = n => (n / 1e6).toLocaleString('ru-RU', {maximumFractionDigits: 2});
 function updateBitrateMetrics() {
   const bitrate = +$('bitrate').value;
   $('bitrateMetric').textContent = bitrate.toLocaleString('ru-RU');
-  $('sizeMetric').textContent = mb((bitrate + 64) * 1000 * (658 / 30) / 8);
+  $('sizeMetric').textContent = mb((bitrate + 64) * 1000 * (676 / 30) / 8);
 }
 $('bitrate').addEventListener('change', () => {updateBitrateMetrics(); markChanged();});
 updateBitrateMetrics();
@@ -37,7 +38,7 @@ function refresh() {
   $('sourceCount').textContent = `${count} из 2`;
   $('renderButton').disabled = count !== 2 || locked || state.uploading.some(Boolean);
   $('renderButton').querySelector('span').textContent = state.result ? 'Собрать заново' : 'Собрать видео';
-  $('readyHint').textContent = state.running ? 'Можно отменить экспорт в любой момент.' : state.stale ? 'Исходники или настройки изменены. Соберите видео заново.' : count === 2 ? 'Исходные файлы останутся без изменений.' : 'Добавьте оба исходника, чтобы начать монтаж.';
+  $('readyHint').textContent = state.running ? 'Можно отменить экспорт в любой момент.' : state.stale ? 'Исходники или настройки изменены. Соберите видео заново.' : count === 2 ? 'После экспорта исходники переместятся в «Руки + Ноги».' : 'Добавьте оба исходника, чтобы начать монтаж.';
   for (let i=0; i<2; i++) {
     $('file'+i).disabled = locked || state.uploading[i];
     $('crop'+i).disabled = locked;
@@ -47,9 +48,9 @@ function refresh() {
   ['mode','transition','sensitivity','bitrate'].forEach(id => $(id).disabled = locked);
   window.batchController?.refreshLocks();
 }
-async function upload(slot, file) {
-  if (!file || state.running || state.externalLocked || state.uploading[slot]) return;
-  if (file.size > 2 * 1024**3) { showError('Файл больше 2 ГБ. Выберите короткий исходный ролик.'); return; }
+async function upload(slot, file, native = false) {
+  if ((!file && !native) || state.running || state.externalLocked || state.uploading[slot]) return;
+  if (file && file.size > 2 * 1024**3) { showError('Файл больше 2 ГБ. Выберите короткий исходный ролик.'); return; }
   state.uploading[slot] = true;
   const status = $('uploadStatus'+slot);
   status.classList.remove('failed');
@@ -57,8 +58,9 @@ async function upload(slot, file) {
   showError('');
   refresh();
   try {
-    const body = new FormData(); body.append('file', file);
-    const source = await api('/api/upload', body);
+    let source;
+    if (native) { source = (await api('/api/choose-source', {})).source; if (!source) { status.textContent = ''; return; } }
+    else { const body = new FormData(); body.append('file', file); source = await api('/api/upload', body); }
     state.sources[slot] = source;
     $('drop'+slot).hidden = true; $('loaded'+slot).hidden = false; $('cropControl'+slot).hidden = false;
     $('name'+slot).textContent = source.name;
@@ -73,6 +75,7 @@ async function upload(slot, file) {
 }
 for (let slot=0; slot<2; slot++) {
   const input = $('file'+slot), drop = $('drop'+slot);
+  input.addEventListener('click', e => { if (nativeApp) { e.preventDefault(); upload(slot, null, true); } });
   input.addEventListener('change', () => upload(slot, input.files[0]));
   drop.addEventListener('keydown', e => { if (e.key==='Enter'||e.key===' ') { e.preventDefault(); input.click(); } });
   drop.addEventListener('dragover', e => {e.preventDefault(); if (!state.running) drop.classList.add('dragover');});
@@ -110,6 +113,7 @@ function selectTab(result) {
   $('referenceTab').setAttribute('aria-selected', String(!result));
   $('resultTab').setAttribute('aria-selected', String(result));
   $('viewerLabel').textContent = result ? (state.stale ? 'Предыдущая версия · нужен новый монтаж' : 'Ваш готовый ролик') : 'Оригинальный ролик';
+  $('videoDuration').textContent = result ? '00:22.53' : '00:21.93';
   $('videoSize').textContent = result ? `${mb(state.result.report.result.size)} МБ` : '2,95 МБ';
 }
 $('referenceTab').onclick = () => selectTab(false);
@@ -137,7 +141,7 @@ async function pollJob() {
       $('resultTab').disabled = false;
       $('resultActions').hidden = false;
       $('outputPath').textContent = job.output;
-      $('successText').textContent = `Сохранено · ${mb(job.report.result.size)} МБ · 21,93 с`;
+      $('successText').textContent = `Сохранено · ${mb(job.report.result.size)} МБ · 22,53 с`;
       selectTab(true);
     } else if (job.status === 'error') showError(job.error);
     else showError('Экспорт отменён. Можно запустить заново.');
@@ -155,6 +159,7 @@ $('renderButton').onclick = async () => {
   state.running = true; showError(''); refresh();
   try {
     const job = await api('/api/render', {
+      article: window.batchController?.exportContext().folder ? undefined : $('articleNumber').value.trim(),
       sources: state.sources.map(s=>s.id), mode:$('mode').value, transition:$('transition').value,
       crops:[+$('crop0').value/100,+$('crop1').value/100], sensitivity:+$('sensitivity').value, bitrate_kbps:+$('bitrate').value,
       ...window.batchController?.exportContext()
@@ -218,6 +223,23 @@ function loadEditor(snapshot) {
   $('transitionHelp').textContent={lens:'Мягкий Lens Blur между планами.',morph:'Оптический поток. На разных ракурсах возможны искажения.',cut:'Мгновенная смена планов.'}[snapshot.settings.transition];
   $('resultTab').disabled=!state.result;$('resultActions').hidden=!state.result||state.stale;
   $('renderOverlay').hidden=true;$('progressArea').hidden=true;showError('');
-  if(state.result){$('outputPath').textContent=state.result.output;$('successText').textContent=`Сохранено · ${mb(state.result.report.result.size)} МБ · 21,93 с`;}
+  if(state.result){$('outputPath').textContent=state.result.output;$('successText').textContent=`Сохранено · ${mb(state.result.report.result.size)} МБ · 22,53 с`;}
   selectTab(!!state.result);refresh();
 }
+
+$('settingsButton').onclick = () => $('settingsDialog').showModal();
+$('closeSettings').onclick = () => $('settingsDialog').close();
+$('saveProcessingLog').disabled = true;
+api('/api/config').then(config => {
+  nativeApp = config.native;
+  $('saveProcessingLog').checked = config.preferences.save_processing_log;
+  $('saveProcessingLog').disabled = false;
+}).catch(error => showError(error.message));
+$('saveProcessingLog').onchange = async () => {
+  const input = $('saveProcessingLog');
+  input.disabled = true;
+  $('settingsError').hidden = true;
+  try { await api('/api/settings', {save_processing_log:input.checked}); }
+  catch(error) { input.checked = !input.checked; $('settingsError').textContent = error.message; $('settingsError').hidden = false; }
+  finally { input.disabled = false; }
+};

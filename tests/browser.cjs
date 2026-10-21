@@ -10,7 +10,7 @@ const targetUrl = process.env.OUTMAX_URL || 'http://127.0.0.1:8765';
   page.on('pageerror', error=>errors.push(error.message));
   try {
     await page.goto(targetUrl);
-    await page.getByRole('heading',{name:'Два видео. Один готовый ролик.'}).waitFor();
+    await page.getByRole('heading',{name:'Редактор видео'}).waitFor();
     await page.waitForFunction(()=>{const v=document.getElementById('mainVideo');return v.readyState>=3&&!v.seeking&&v.currentTime>=1.9;});
     await page.evaluate(()=>document.fonts.ready);
     // Native video-control spinner has a fade after seeked; allow that chrome to settle.
@@ -25,6 +25,7 @@ const targetUrl = process.env.OUTMAX_URL || 'http://127.0.0.1:8765';
     await page.getByRole('dialog').waitFor();
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({state:'hidden'});
+    await page.locator('#articleNumber').fill('99001');
     await page.locator('#file0').setInputFiles(path.join(root,'видео','2026-10-01 16.09.54.MOV'));
     await page.locator('#loaded0').waitFor({timeout:120000});
     await page.locator('#file1').setInputFiles(path.join(root,'видео','2026-09-30 14.45.00.MOV'));
