@@ -38,7 +38,7 @@ def main():
             raise RuntimeError("Packaged app did not start")
         assert data["version"] == VERSION, data
         assert "Профиль" in data["output"], data
-        for resource in ("/", "/reference", "/ui/app.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
+        for resource in ("/", "/reference", "/ui/app.js", "/ui/live-preview.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
             with urllib.request.urlopen("http://127.0.0.1:8771" + resource) as response:
                 assert response.status == 200
         ffprobe = target / "_internal" / "bin" / "ffprobe.exe"

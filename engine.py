@@ -185,7 +185,7 @@ def template_segments(durations):
 def scan_content(path, cancel):
     """Small frames distinguish subject detail from exposure changes on an empty backdrop."""
     cap = cv2.VideoCapture(str(path))
-    duration = cap.get(cv2.CAP_PROP_FRAME_COUNT) / FPS
+    duration = cap.get(cv2.CAP_PROP_FRAME_COUNT) / (cap.get(cv2.CAP_PROP_FPS) or FPS)
     times, scores, details = [], [], []
     prev = None
     try:
@@ -380,7 +380,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
                       width=width, height=height, crop_x=settings.get("crops_x", [.5, .5])[s], preview=preview)
             paths.append(path)
         progress(29, "Анализ движения и точек монтажа")
-        analyses = [scan_content(path, cancel) for path in paths]
+        analyses = [scan_content(path, cancel) for path in settings.get("_analysis_paths", sources)]
         bounds = [scene_bounds(analysis,s) for s,analysis in enumerate(analyses)]
         segments = smart_segments(paths,settings["sensitivity"],cancel,analyses,bounds,
                                   remove_pauses=settings["mode"]=="smart")
@@ -474,7 +474,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
         else:
             os.link(temp_output, output)
             temp_output.unlink()
-        report = dict(generator="OUTMAX Cut", segments=segments, settings=settings, result=result,
+        report = dict(generator="OUTMAX Cut", segments=segments, settings={k:v for k,v in settings.items() if not k.startswith("_")}, result=result,
                       loop=True, content_bounds=bounds, black_opening_frame=False,
                       frames=frame_count, fps=FPS, speed=PLAYBACK_SPEED,model_frames=model_frames,hands_frames=hands_frames,
                       transition_note="Independent Lens Blur approximation / optical flow")

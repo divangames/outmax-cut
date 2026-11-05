@@ -62,6 +62,7 @@ async function prepareSource(path, body, onProgress) {
 }
 function showError(message) { $('errorMessage').textContent = message; $('errorMessage').hidden = !message; }
 function markChanged(previewChanged=true) {
+  if(previewChanged)window.livePreview?.edit();
   if(previewChanged){
     state.preview=null;$('previewTab').disabled=true;
     if($('previewTab').getAttribute('aria-selected')==='true')$('viewerLabel').textContent='Превью обновляется…';
@@ -148,7 +149,7 @@ function updateFormat(){
   document.querySelectorAll('.source-preview').forEach(el=>el.style.aspectRatio=`${width}/${height}`);
   const source=$('mainVideo').dataset.sourceSlot!==undefined;
   const viewing=$('previewTab').getAttribute('aria-selected')==='true'?state.preview:resultVariant();
-  const dims=source?[width,height]:$('referenceTab').getAttribute('aria-selected')==='true'?[1080,1080]:viewing?[viewing.report.result.width,viewing.report.result.height]:[width,height];
+  const dims=source||window.livePreview?.active?[width,height]:$('referenceTab').getAttribute('aria-selected')==='true'?[1080,1080]:viewing?[viewing.report.result.width,viewing.report.result.height]:[width,height];
   $('viewer').style.setProperty('--video-ratio',dims[0]/dims[1]);
   document.querySelectorAll('.preset-label span,.export-summary span').forEach(el=>el.textContent=`${width} × ${height} · 30 кадров/с`);
 }
@@ -169,8 +170,7 @@ for (let slot=0; slot<2; slot++) {
     $('cropXValue'+slot).textContent = `${Math.round(+$('cropX'+slot).value)}%`;
     $('sourceVideo'+slot).style.objectPosition = cropPosition(slot);
     markChanged();
-    if($('mainVideo').dataset.sourceSlot!==String(slot))window.previewSource?.(slot);
-    $('mainVideo').style.objectPosition=cropPosition(slot);
+    if($('mainVideo').dataset.sourceSlot===String(slot))$('mainVideo').style.objectPosition=cropPosition(slot);
   });
   $('resetCrop'+slot).onclick=()=>{
     $('cropX'+slot).value=50;$('crop'+slot).value=slot?50:82.4;
@@ -196,15 +196,31 @@ $('transition').addEventListener('change', () => {
   }[$('transition').value];
   markChanged();
 });
-function selectTab(result, preview=false) {
+let playerRevision=0;
+function selectTab(result, preview=false, playback=null) {
   const selected=preview?state.preview:result?resultVariant():null;
   if ((result||preview) && !selected) return;
+  const revision=++playerRevision,video=$('mainVideo');
+  delete video.dataset.userSourceView;
+  if(!playback)window.livePreview?.stop();
   $('mainVideo').pause();
   $('mainVideo').loop=!!selected;
   $('mainVideo').onloadeddata=null;delete $('mainVideo').dataset.sourceSlot;$('mainVideo').style.objectFit='contain';
-  $('mainVideo').onloadedmetadata=selected?()=>{const video=$('mainVideo');if(video.paused)video.currentTime=Math.min(.1,video.duration/2);}:null;
+  const restore=()=>{
+    if(revision!==playerRevision)return;
+    const time=Math.min(playback?.time??.1,Math.max(0,video.duration-1/30));
+    const finish=()=>{
+      if(revision!==playerRevision)return;
+      playback?.onRestored?.();
+      if(playback&&!playback.paused)video.play().catch(()=>{});else video.pause();
+    };
+    if(Math.abs(video.currentTime-time)>1/120){video.addEventListener('seeked',finish,{once:true});video.currentTime=time;}
+    else if(video.readyState>=2)finish();else video.addEventListener('loadeddata',finish,{once:true});
+  };
+  $('mainVideo').onloadedmetadata=selected?restore:null;
   const videoPath=selected ? `/result/${preview?state.preview.id:state.result.id}${!preview&&selected.format?'?format='+selected.format:''}` : '/reference';
-  if($('mainVideo').getAttribute('src')!==videoPath){$('mainVideo').src=videoPath;motion.reveal($('viewer'));}
+  if($('mainVideo').getAttribute('src')!==videoPath){$('mainVideo').src=videoPath;if(playback)$('mainVideo').currentTime=playback.time;else motion.reveal($('viewer'));}
+  else if(selected&&video.readyState>=1)restore();
   $('mainVideo').setAttribute('aria-label', preview?'Автоматическое превью':result ? 'Готовое видео' : 'Видео эталона');
   $('resultFormatControl').hidden=!result||preview||($('resultFormat').options.length<2);
   for(const id of ['previewModel','previewHands'])if($(id))$(id).setAttribute('aria-pressed','false');
@@ -277,6 +293,7 @@ async function startAssembly() {
   if (state.running || state.externalLocked) return;
   state.running = true; showError(''); refresh();
   window.autoPreview?.cancel();
+  window.livePreview?.stop();
   try {
     const job = await api('/api/render', {
       article: window.batchController?.exportContext().folder ? undefined : $('articleNumber').value.trim(),
@@ -317,11 +334,13 @@ refresh();
 
 function editorSnapshot() {
   return {sources:[...state.sources], result:state.result, preview:state.preview, stale:state.stale,
+    playback:$('mainVideo').getAttribute('src')?.startsWith('/result/')?{time:$('mainVideo').currentTime,paused:$('mainVideo').paused}:null,
     settings:{mode:$('mode').value, transition:$('transition').value,
       crops:[+$('crop0').value/100,+$('crop1').value/100], crops_x:[+$('cropX0').value/100,+$('cropX1').value/100], format:$('outputFormat').value,formats:selectedFormats(), sensitivity:+$('sensitivity').value, bitrate_kbps:+$('bitrate').value}};
 }
 function loadEditor(snapshot) {
   window.autoPreview?.cancel();
+  window.livePreview?.stop(true);
   state.sources=[...snapshot.sources];state.result=snapshot.result||null;state.preview=snapshot.preview||null;state.stale=!!snapshot.stale;
   for(let i=0;i<2;i++){
     const source=state.sources[i],video=$('sourceVideo'+i);
@@ -354,7 +373,7 @@ function loadEditor(snapshot) {
   $('renderOverlay').hidden=true;$('progressArea').hidden=true;showError('');
   if(state.result){$('outputPath').textContent=(state.result.variants||[state.result]).map(v=>v.output).join('\n');$('successText').textContent=`Сохранено вариантов: ${state.result.variants?.length||1} · ${state.result.report.result.duration.toFixed(2)} с · ×1,25`;}
   const showPreview=!!state.preview&&(!state.result||state.stale);
-  selectTab(!showPreview&&!!state.result,showPreview);refresh();
+  selectTab(!showPreview&&!!state.result,showPreview,snapshot.playback);refresh();
   window.autoPreview?.schedule(100);
 }
 

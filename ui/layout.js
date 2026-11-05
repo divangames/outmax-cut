@@ -22,17 +22,19 @@
   $('viewer').after(sourceTabs);
   const cropDock=document.createElement('div');cropDock.className='crop-dock';cropDock.hidden=true;sourceTabs.after(cropDock);
   for(let i=0;i<2;i++){$('cropControl'+i).dataset.role=i?'Руки':'Модель';$('cropControl'+i).append($('resetCrop'+i));}
-  window.previewSource=slot=>{
+  window.previewSource=(slot,userInitiated=false)=>{
     const source=state.sources[slot];if(!source)return;
+    window.livePreview?.stop(true);++playerRevision;
+    $('mainVideo').dataset.userSourceView=String(userInitiated);
     $('mainVideo').loop=true;
     $('mainVideo').onloadedmetadata=null;
-    $('mainVideo').pause();$('mainVideo').dataset.sourceSlot=String(slot);$('mainVideo').style.objectFit='cover';$('mainVideo').style.objectPosition=cropPosition(slot);$('mainVideo').src=source.preview;$('mainVideo').onloadeddata=()=>{$('mainVideo').currentTime=Math.min(3,source.info.duration/2);};$('mainVideo').setAttribute('aria-label',slot?'Исходник рук':'Исходник модели');updateFormat();
+    $('mainVideo').pause();$('mainVideo').dataset.sourceSlot=String(slot);$('mainVideo').style.objectFit='cover';$('mainVideo').style.objectPosition=cropPosition(slot);$('mainVideo').src=source.preview;$('mainVideo').onloadeddata=null;$('mainVideo').onloadedmetadata=()=>{if($('mainVideo').currentTime===0)$('mainVideo').currentTime=Math.min(3,source.info.duration/2);};$('mainVideo').setAttribute('aria-label',slot?'Исходник рук':'Исходник модели');updateFormat();
     $('viewerLabel').textContent=source.name;$('videoDuration').textContent=source.info.duration.toFixed(2)+' с';$('videoSize').textContent=mb(source.info.size)+' МБ';
     $('resultFormatControl').hidden=true;
     $('referenceTab').setAttribute('aria-selected','false');$('resultTab').setAttribute('aria-selected','false');$('previewTab').setAttribute('aria-selected','false');
     $('previewModel').setAttribute('aria-pressed',String(!slot));$('previewHands').setAttribute('aria-pressed',String(!!slot));motion.reveal($('viewer'));
   };
-  $('previewModel').onclick=()=>previewSource(0);$('previewHands').onclick=()=>previewSource(1);
+  $('previewModel').onclick=()=>previewSource(0,true);$('previewHands').onclick=()=>previewSource(1,true);
   window.workspaceLayout=enabled=>{
     cropDock.hidden=!enabled;
     for(let i=0;i<2;i++){

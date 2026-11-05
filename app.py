@@ -494,7 +494,8 @@ def _execute_job(job):
             def variant_progress(value, stage):
                 progress(min(99, (index + value / 100) / len(variants) * 100),
                          f"{index+1}/{len(variants)} · {stage}" if len(variants) > 1 else stage)
-            report = render(inputs, infos, settings, folder, variant["output"], variant_progress, job["cancel"])
+            render_settings = settings | {"_analysis_paths":[str(s.get("preview_path",s["path"])) for s in selected]}
+            report = render(inputs, infos, render_settings, folder, variant["output"], variant_progress, job["cancel"])
             created_outputs.append(variant["output"])
             variant.update(report=report, status="done")
         if job["cancel"].is_set():
