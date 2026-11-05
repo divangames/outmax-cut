@@ -39,7 +39,7 @@
         <button id="importFolderButton" class="secondary-button">Выбрать папку</button>
         <input id="folderInput" type="file" webkitdirectory multiple hidden>
       </div>
-      <div class="batch-import-status" id="batchImportStatus" role="status" hidden><span id="batchImportText"></span><button class="text-button" id="cancelImportButton">Остановить импорт</button></div>
+      <div class="batch-import-status" id="batchImportStatus" role="status" hidden><span id="batchImportText"></span><button class="text-button" id="cancelImportButton">Остановить импорт</button><progress id="batchImportProgress" max="100" value="0" aria-label="Ход импорта папки"></progress></div>
       <p id="batchImportNotice" class="field-help" role="status"></p>
       <div class="message error" id="batchError" role="alert" hidden></div>
       <div class="batch-toolbar">
@@ -73,10 +73,12 @@
             <span><strong>Перетащите видео сюда</strong><small>или нажмите, чтобы выбрать</small></span>
           </label>
           <div class="source-loaded" id="loaded0" hidden>
-            <div class="source-preview"><video id="sourceVideo0" muted playsinline controls preload="metadata" aria-label="Предпросмотр видео модели"></video></div>
+            <div class="source-preview"><video id="sourceVideo0" muted playsinline loop controls preload="metadata" aria-label="Предпросмотр видео модели"></video></div>
             <div class="source-details"><strong id="name0"></strong><span id="meta0"></span><button class="text-button replace" data-slot="0">Заменить видео</button></div>
           </div>
-          <div class="crop-control" id="cropControl0" hidden><label for="crop0">Кадрирование <output id="cropValue0">82%</output></label><input id="crop0" type="range" min="0" max="100" value="82.4" step=".1" aria-label="Вертикальное положение кадра модели"><div class="range-ends"><span>Выше</span><span>Ниже</span></div></div>
+          <div class="crop-control" id="cropControl0" hidden><label for="cropX0">По горизонтали <output id="cropXValue0">50%</output></label><input id="cropX0" type="range" min="0" max="100" value="50" step=".1" aria-label="Горизонтальное положение кадра модели"><div class="range-ends"><span>Левый край</span><span>Правый край</span></div><label for="crop0">По вертикали <output id="cropValue0">82%</output></label><input id="crop0" type="range" min="0" max="100" value="82.4" step=".1" aria-label="Вертикальное положение кадра модели"><div class="range-ends"><span>Верхний край</span><span>Нижний край</span></div></div>
+          <progress id="uploadProgress0" max="100" value="0" aria-label="Ход импорта видео модели" hidden></progress>
+          <button id="resetCrop0" class="text-button reset-crop" hidden>Сбросить положение модели</button>
           <p class="upload-status" id="uploadStatus0" role="status"></p>
         </div>
         <div class="source" data-slot="1">
@@ -87,22 +89,27 @@
             <span><strong>Перетащите видео сюда</strong><small>или нажмите, чтобы выбрать</small></span>
           </label>
           <div class="source-loaded" id="loaded1" hidden>
-            <div class="source-preview"><video id="sourceVideo1" muted playsinline controls preload="metadata" aria-label="Предпросмотр видео в руках"></video></div>
+            <div class="source-preview"><video id="sourceVideo1" muted playsinline loop controls preload="metadata" aria-label="Предпросмотр видео в руках"></video></div>
             <div class="source-details"><strong id="name1"></strong><span id="meta1"></span><button class="text-button replace" data-slot="1">Заменить видео</button></div>
           </div>
-          <div class="crop-control" id="cropControl1" hidden><label for="crop1">Кадрирование <output id="cropValue1">50%</output></label><input id="crop1" type="range" min="0" max="100" value="50" step=".1" aria-label="Вертикальное положение кадра в руках"><div class="range-ends"><span>Выше</span><span>Ниже</span></div></div>
+          <div class="crop-control" id="cropControl1" hidden><label for="cropX1">По горизонтали <output id="cropXValue1">50%</output></label><input id="cropX1" type="range" min="0" max="100" value="50" step=".1" aria-label="Горизонтальное положение кадра в руках"><div class="range-ends"><span>Левый край</span><span>Правый край</span></div><label for="crop1">По вертикали <output id="cropValue1">50%</output></label><input id="crop1" type="range" min="0" max="100" value="50" step=".1" aria-label="Вертикальное положение кадра в руках"><div class="range-ends"><span>Верхний край</span><span>Нижний край</span></div></div>
+          <progress id="uploadProgress1" max="100" value="0" aria-label="Ход импорта видео в руках" hidden></progress>
+          <button id="resetCrop1" class="text-button reset-crop" hidden>Сбросить положение рук</button>
           <p class="upload-status" id="uploadStatus1" role="status"></p>
         </div>
         <p class="formats">MOV, MP4 и другие форматы · до 2 ГБ на файл</p>
         <div class="settings">
           <h2>Монтаж</h2>
+          <fieldset id="exportFormats" class="format-options"><legend>Разрешения экспорта</legend><label><input type="checkbox" value="standard" checked> Стандарт <span>1080 × 1080 · 1:1</span></label><label><input type="checkbox" value="marketplace"> Маркетплейс <span>900 × 1200</span></label><label><input type="checkbox" value="vertical"> Вертикальный <span>1080 × 1920 · 9:16</span></label></fieldset>
+          <label class="field-label" for="outputFormat">Формат предпросмотра</label>
+          <select id="outputFormat"><option value="standard">Стандарт · 1:1 · 1080 × 1080</option><option value="marketplace">Маркетплейс · 900 × 1200</option><option value="vertical">Вертикальный · 9:16 · 1080 × 1920</option></select>
           <label class="field-label" for="mode">Режим сборки</label>
-          <select id="mode"><option value="template">Тайминг эталона</option><option value="smart">Автоматически убрать паузы</option></select>
+          <select id="mode"><option value="template">Без удаления пауз</option><option value="smart" selected>Автоматически убрать паузы</option></select>
           <p class="field-help" id="modeHelp">Точки монтажа и ускорения из проекта Premiere. Для видео с похожим порядком движений.</p>
-          <div id="smartOptions" hidden><label class="field-label" for="sensitivity">Удаление пауз <output id="sensitivityValue">40%</output></label><input id="sensitivity" type="range" min="0" max="100" value="40"><p class="field-help">По движению в кадре. Проверьте результат: неподвижная демонстрация тоже может считаться паузой.</p></div>
+          <div id="smartOptions"><label class="field-label" for="sensitivity">Удаление пауз <output id="sensitivityValue">40%</output></label><input id="sensitivity" type="range" min="0" max="100" value="40"><p class="field-help">По движению в кадре. Проверьте результат: неподвижная демонстрация тоже может считаться паузой.</p></div>
           <label class="field-label" for="transition">Переход между планами</label>
           <select id="transition"><option value="lens">Расфокусировка · как в проекте</option><option value="morph">Морфинг · оптический поток</option><option value="cut">Прямая склейка</option></select>
-          <p class="field-help" id="transitionHelp">Мягкий Lens Blur между моделью, руками и финальным фоном.</p>
+          <p class="field-help" id="transitionHelp">Мягкий Lens Blur между планами и плавный возврат к началу.</p>
         </div>
       </section>
       <section class="preview-panel" aria-label="Предпросмотр и экспорт">
@@ -110,9 +117,12 @@
           <div class="tabs" role="tablist" aria-label="Выбор видео">
             <button role="tab" aria-selected="true" aria-controls="viewer" id="referenceTab">Эталон</button>
             <button role="tab" aria-selected="false" aria-controls="viewer" id="resultTab" disabled>Результат</button>
+            <button role="tab" aria-selected="false" aria-controls="viewer" id="previewTab" disabled>Превью</button>
           </div>
           <span class="viewer-label" id="viewerLabel">Оригинальный ролик</span>
         </div>
+        <p id="autoPreviewStatus" class="auto-preview-status" role="status">Превью появится автоматически после добавления двух видео.</p>
+        <label class="result-format" id="resultFormatControl" hidden>Просмотр результата<select id="resultFormat" aria-label="Разрешение готового результата"></select></label>
         <div class="stage" id="viewer" role="tabpanel" aria-label="Видео">
           <video id="mainVideo" src="/reference" controls playsinline preload="auto" aria-label="Видео эталона"></video>
           <div class="stage-empty" id="renderOverlay" hidden>
@@ -121,9 +131,9 @@
           </div>
         </div>
         <div class="video-spec"><span id="videoDuration">00:22.83</span><span id="videoSize">2,99 МБ</span><span>MP4 / H.264</span><span>Без звука</span></div>
-        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 12,7 секунды, финал 0,87 секунды">
+        <div class="timeline" aria-label="Порядок монтажа: модель 9,23 секунды, руки 12,7 секунды, возврат к началу 0,9 секунды">
           <div class="timeline-label"><h3>Сценарий ролика</h3><span>22,83 с</span></div>
-          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>12,70 с</span></div><div class="clip-end" title="Финальный фон · 0,87 с" aria-label="Финальный фон"></div></div>
+          <div class="timeline-track"><div class="clip-model">Модель <span>9,23 с</span></div><div class="clip-hands">Руки <span>12,70 с</span></div><div class="clip-end" title="Плавный возврат к началу · 0,9 с" aria-label="Плавный возврат к началу"></div></div>
           <div class="timeline-times"><span>0:00</span><span>0:10</span><span>0:23</span></div>
         </div>
         <div class="export-area">
@@ -178,8 +188,8 @@
   </section>
   <dialog id="helpDialog" aria-labelledby="helpTitle">
     <h2 id="helpTitle">Из двух исходников — в готовый ролик</h2>
-    <ol><li>Добавьте модель на ногах и демонстрацию в руках. Порядок задают подписанные поля.</li><li>Проверьте квадратный кадр. Ползунок сдвигает его выше или ниже.</li><li>Для похожей съёмки оставьте тайминг эталона. Для других дублей выберите удаление пауз.</li><li>Нажмите «Собрать видео». После обработки посмотрите результат и сохраните его.</li></ol>
-    <p>Шаблон сохраняет длительность 22,83 с, ускорения, переходы и короткий финал из начала видео модели. Чтобы получить чистый фон в конце, начинайте съёмку модели с пустого фона.</p>
+    <ol><li>Добавьте модель на ногах и демонстрацию в руках. Порядок задают подписанные поля.</li><li>Отметьте одно или несколько разрешений экспорта. Ползунки задают положение кадра; «Сбросить положение» возвращает начальные значения.</li><li>Превью собирается автоматически после загрузки и изменения настроек. По умолчанию включено удаление пауз; ваш выбор режима, битрейта и чувствительности сохраняется.</li><li>Нажмите «Собрать видео» для экспорта всех отмеченных разрешений. Исходники перемещаются после готовности всех вариантов.</li></ol>
+    <p>Скорость ×1,25. Пустой фон → появление, показ и полный уход модели → расфокусировка → обзор в руках, постановка обуви и уход рук → расфокусировка на пустой фон перед следующим появлением модели. Длительность зависит от исходников. Превью и результат воспроизводятся по кругу.</p>
     <p>Исходный проект использует Film Impact Lens Blur. Здесь — самостоятельное приближение эффекта. Морфинг доступен отдельно; на сильно разных планах возможны искажения.</p>
     <p>В пакетном режиме добавьте общую папку с подпапками товаров. В каждой ожидаются два видео. Нажмите на товар, чтобы просмотреть исходники и изменить его настройки. Если файлов больше двух — выберите пару из списков. Очередь экспортируется в выбранную папку по одному ролику; ошибка одного товара не останавливает остальные.</p>
     <button class="primary-button" id="closeHelp">Понятно</button>
@@ -188,6 +198,7 @@
   <script src="/ui/app.js" defer></script>
   <script src="/ui/batch.js" defer></script>
   <script src="/ui/layout.js" defer></script>
+  <script src="/ui/preview.js" defer></script>
   <script src="/ui/updates.js" defer></script>
 </body>
 </html>

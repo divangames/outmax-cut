@@ -211,6 +211,21 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(all(s["path"].exists() for s in server.sources.values()))
         self.assertFalse((self.root / "44238/Руки + Ноги").exists())
 
+    def test_preview_works_without_article_or_output_and_preserves_sources(self):
+        original=[entry["path"] for entry in server.sources.values()]
+        for entry in server.sources.values():entry["preview_path"]=entry["path"]
+        job=server.create_job({"sources":["a","b"],"format":"vertical","crops_x":[.1,.9]}, preview=True)
+        def render(paths,infos,settings,work,output,progress,cancel):
+            output.write_bytes(b"preview")
+            return {"result":{"size":7}}
+        with patch.object(server,"render",render),patch.object(server,"archive_sources") as archive:
+            server.execute_job(job)
+        self.assertEqual(job["status"],"done")
+        archive.assert_not_called()
+        self.assertTrue(all(path.exists() for path in original))
+        self.assertTrue(job["output"].is_relative_to(server.WORK))
+        self.assertEqual(job["settings"]["crops_x"],[.1,.9])
+
     def test_archive_copy_failure_retains_both_originals(self):
         job = server.create_job(self.item(output=str(self.root)))
         job["output"].parent.mkdir()
@@ -245,7 +260,8 @@ class BatchTests(unittest.TestCase):
 
     def test_log_preference_persists_and_creates_only_opt_in_log(self):
         with patch.object(server, "SETTINGS_FILE", self.root / "settings.json"):
-            self.assertEqual(server.load_preferences(), {"save_processing_log":False})
+            self.assertFalse(server.load_preferences()["save_processing_log"])
+            self.assertEqual(server.load_preferences()["mode"], "smart")
             response = self.client.post("/api/settings", json={"save_processing_log":True}, headers=self.headers)
             self.assertEqual(response.status_code, 200)
             self.assertTrue(server.load_preferences()["save_processing_log"])
@@ -266,6 +282,75 @@ class BatchTests(unittest.TestCase):
             "items":[self.item(),self.item(sources=["a",None])]},headers=self.headers)
         self.assertEqual(response.status_code,400)
         self.assertFalse(server.jobs)
+
+    def test_three_formats_archive_only_after_all_are_ready(self):
+        seen=[]
+        originals=[s["path"] for s in server.sources.values()]
+        def render(paths, infos, settings, work, output, progress, cancel):
+            self.assertTrue(all(p.exists() for p in originals))
+            seen.append(settings["format"])
+            output.write_bytes(settings["format"].encode())
+            return {"result":{"size":output.stat().st_size}}
+        job=server.create_job(self.item(output=str(self.root), formats=["standard","marketplace","vertical"]))
+        with patch.object(server,"render",render),patch.object(server,"archive_sources",wraps=server.archive_sources) as archive:
+            server.execute_job(job)
+        self.assertEqual(job["status"],"done")
+        self.assertEqual(seen,["standard","marketplace","vertical"])
+        archive.assert_called_once()
+        self.assertEqual([v["output"].name for v in job["variants"]],["44238_1080x1080.mp4","44238_900x1200.mp4","44238_1080x1920.mp4"])
+        self.assertTrue((self.root/"44238/Руки + Ноги/44238_ноги.mp4").exists())
+        view=self.client.get('/api/jobs/'+job['id']).json
+        self.assertEqual(len(view['variants']),3)
+        response=self.client.get('/result/'+job['id']+'?format=vertical')
+        self.assertEqual(response.data,b'vertical');response.close()
+        self.assertEqual(self.client.get('/result/'+job['id']+'?format=unknown').status_code,404)
+
+    def test_multi_format_failure_or_cancel_rolls_back_own_outputs(self):
+        for failure in (RuntimeError("encoder failed"),Cancelled()):
+            server.jobs.clear()
+            job=server.create_job(self.item(output=str(self.root),formats=["standard","vertical"]))
+            def render(paths,infos,settings,work,output,progress,cancel):
+                if settings['format']=='vertical':raise failure
+                output.write_bytes(b'first variant')
+                return {"result":{"size":13}}
+            with patch.object(server,"render",render):server.execute_job(job)
+            self.assertIn(job['status'],('error','cancelled'))
+            self.assertTrue(all(s['path'].exists() for s in server.sources.values()))
+            self.assertFalse(any(v['output'].exists() for v in job['variants']))
+
+    def test_collision_in_later_format_prevents_every_render(self):
+        folder=self.root/'44238';folder.mkdir()
+        existing=folder/'44238_1080x1920.mp4';existing.write_bytes(b'keep')
+        response=self.client.post('/api/render',json=self.item(output=str(self.root),formats=['standard','vertical']),headers=self.headers)
+        self.assertEqual(response.status_code,400)
+        self.assertFalse(server.jobs)
+        self.assertEqual(existing.read_bytes(),b'keep')
+
+    def test_preview_cache_ignores_export_only_choices(self):
+        for s in server.sources.values():s['preview_path']=s['path']
+        def render(paths,infos,settings,work,output,progress,cancel):
+            output.write_bytes(b'preview')
+            return {'result':{'size':7}}
+        with patch.object(server,'render',render):
+            first=self.client.post('/api/preview',json=self.item(),headers=self.headers).json
+            server.jobs[first['id']]['thread'].join(3)
+            second=self.client.post('/api/preview',json=self.item(bitrate_kbps=500,formats=['standard','vertical']),headers=self.headers).json
+        self.assertEqual(first['id'],second['id'])
+        self.assertTrue(second['cached'])
+
+    def test_preferences_are_partial_persistent_and_validated(self):
+        before=dict(server.preferences)
+        try:
+            with patch.object(server,'SETTINGS_FILE',self.root/'settings.json'):
+                for body in ({'mode':'template'},{'bitrate_kbps':750},{'sensitivity':73},{'save_processing_log':True}):
+                    self.assertEqual(self.client.post('/api/settings',json=body,headers=self.headers).status_code,200)
+                restored=server.load_preferences()
+                self.assertEqual(restored,{'mode':'template','bitrate_kbps':750,'sensitivity':73,'save_processing_log':True})
+                for body in ({'mode':'wrong'},{'bitrate_kbps':True},{'sensitivity':101},{'save_processing_log':1}):
+                    self.assertEqual(self.client.post('/api/settings',json=body,headers=self.headers).status_code,400)
+                self.assertEqual(server.load_preferences(),restored)
+        finally:
+            server.preferences.clear();server.preferences.update(before)
 
 
 if __name__=="__main__":

@@ -8,7 +8,7 @@ import app as server
 class BackgroundImportTests(unittest.TestCase):
     def test_preview_preparation_does_not_hold_request_worker(self):
         started, release = threading.Event(), threading.Event()
-        def prepare(path, folder, name, relative, cancel):
+        def prepare(path, folder, name, relative, cancel, progress=None):
             started.set()
             release.wait(5)
             return dict(id=folder.name,name=name,relative=relative,info={'duration':1},

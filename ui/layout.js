@@ -8,7 +8,7 @@
   const advanced=document.createElement('div');advanced.id='advancedPanel';advanced.hidden=true;
   const advancedButton=document.createElement('button');advancedButton.className='secondary-button advanced-toggle';advancedButton.id='advancedButton';advancedButton.textContent='Дополнительно';advancedButton.setAttribute('aria-controls','advancedPanel');advancedButton.setAttribute('aria-expanded','false');
   controls.append(advancedButton,advanced);
-  for(const id of ['cropControl0','cropControl1','modeHelp','transitionHelp'])advanced.append($(id));
+  for(const id of ['modeHelp','transitionHelp'])advanced.append($(id));
   advancedButton.onclick=()=>{const show=advanced.hidden;motion.visible(advanced,show);advancedButton.setAttribute('aria-expanded',String(show));};
   controls.append(document.querySelector('.export-area'));
   for(const id of ['progressArea','errorMessage','resultActions'])preview.append($(id));
@@ -20,17 +20,28 @@
   const sourceTabs=document.createElement('div');sourceTabs.className='tabs source-tabs';sourceTabs.setAttribute('role','group');sourceTabs.setAttribute('aria-label','Просмотр исходника');
   sourceTabs.innerHTML='<button id="previewModel" aria-pressed="true">Модель</button><button id="previewHands" aria-pressed="false">Руки</button>';
   $('viewer').after(sourceTabs);
+  const cropDock=document.createElement('div');cropDock.className='crop-dock';cropDock.hidden=true;sourceTabs.after(cropDock);
+  for(let i=0;i<2;i++){$('cropControl'+i).dataset.role=i?'Руки':'Модель';$('cropControl'+i).append($('resetCrop'+i));}
   window.previewSource=slot=>{
     const source=state.sources[slot];if(!source)return;
-    $('mainVideo').pause();$('mainVideo').dataset.sourceSlot=String(slot);$('mainVideo').style.objectFit='cover';$('mainVideo').style.objectPosition=`50% ${$('crop'+slot).value}%`;$('mainVideo').src=source.preview;$('mainVideo').onloadeddata=()=>{$('mainVideo').currentTime=Math.min(3,source.info.duration/2);};$('mainVideo').setAttribute('aria-label',slot?'Исходник рук':'Исходник модели');
+    $('mainVideo').loop=true;
+    $('mainVideo').onloadedmetadata=null;
+    $('mainVideo').pause();$('mainVideo').dataset.sourceSlot=String(slot);$('mainVideo').style.objectFit='cover';$('mainVideo').style.objectPosition=cropPosition(slot);$('mainVideo').src=source.preview;$('mainVideo').onloadeddata=()=>{$('mainVideo').currentTime=Math.min(3,source.info.duration/2);};$('mainVideo').setAttribute('aria-label',slot?'Исходник рук':'Исходник модели');updateFormat();
     $('viewerLabel').textContent=source.name;$('videoDuration').textContent=source.info.duration.toFixed(2)+' с';$('videoSize').textContent=mb(source.info.size)+' МБ';
-    $('referenceTab').setAttribute('aria-selected','false');$('resultTab').setAttribute('aria-selected','false');
+    $('resultFormatControl').hidden=true;
+    $('referenceTab').setAttribute('aria-selected','false');$('resultTab').setAttribute('aria-selected','false');$('previewTab').setAttribute('aria-selected','false');
     $('previewModel').setAttribute('aria-pressed',String(!slot));$('previewHands').setAttribute('aria-pressed',String(!!slot));motion.reveal($('viewer'));
   };
   $('previewModel').onclick=()=>previewSource(0);$('previewHands').onclick=()=>previewSource(1);
   window.workspaceLayout=enabled=>{
+    cropDock.hidden=!enabled;
+    for(let i=0;i<2;i++){
+      if(enabled)cropDock.append($('cropControl'+i));
+      else $('loaded'+i).after($('cropControl'+i));
+    }
     if(enabled){main.prepend(nav);sidebar.append(detail,$('editorWorkspace'));$('editorWorkspace').prepend(preview);controls.append($('applySettingsButton'));}
     else {controls.prepend(nav);main.insertBefore($('editorWorkspace'),sidebar);$('editorWorkspace').prepend(controls);main.insertBefore(detail,sidebar);detail.append($('applySettingsButton'));}
+    window.autoPreview?.schedule();
   };
   $('batchSelectAll').onchange=()=>window.batchController.selectAll($('batchSelectAll').checked);
   workspaceLayout(false);

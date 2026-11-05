@@ -146,3 +146,28 @@ dialog{border:1px solid var(--line);box-shadow:0 20px 70px #17355626;border-radi
 .stage{width:min(100%,calc(100vh - 330px));max-width:500px}.primary-button:disabled{background:#e8eff8;color:#8495ac;border-color:#dfe8f4;box-shadow:none}.batch-mode .stage{width:100%}.source-head>span{color:var(--muted)}
 
 .batch-mode .stage{width:min(100%,calc(100vh - 530px));max-width:310px}.source-options{width:100%;font-size:11px}.source-options summary{cursor:pointer;color:var(--muted);padding:3px 0}.source-options #swapDetailButton{margin-top:8px}.batch-mode .settings{display:grid;grid-template-columns:90px 1fr;gap:9px;align-items:center}.batch-mode .settings h2{display:none}.batch-mode .settings .field-label{margin:0;font-size:11px}.batch-mode #smartOptions{grid-column:1/-1}.batch-mode .settings select{height:30px}.batch-mode .advanced-toggle{margin-top:10px;min-height:30px}.batch-mode .batch-detail p{margin-bottom:8px}
+
+/* Format-aware players share exactly the crop used by the video engine. */
+.stage{aspect-ratio:var(--video-ratio,1);width:min(100%,calc((100vh - 340px)*var(--video-ratio,1)))}
+.batch-mode .stage{width:min(100%,calc(max(190px,100vh - 650px)*var(--video-ratio,1)))}
+.source-preview{aspect-ratio:1;max-height:150px}
+.crop-control label{margin-top:8px;gap:8px;font-size:12px}.crop-control input[type=range]{margin-top:3px;min-height:20px}
+.crop-control .range-ends{font-size:11px;margin-bottom:8px}.crop-control output{color:var(--muted)}
+.crop-dock{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:8px}
+.crop-dock .crop-control::before{content:attr(data-role);font-size:12px;font-weight:600}
+.source-tabs{display:flex;margin-top:10px;align-self:center;max-width:320px;width:100%}
+.batch-import-status{display:flex;flex-wrap:wrap;gap:8px}.batch-import-status>span{flex:1;min-width:0;overflow-wrap:anywhere}.batch-import-status>progress{flex-basis:100%;margin:0}
+.source>.motion-progress{margin-top:8px}.video-spec{flex-wrap:wrap;row-gap:4px}
+@media(max-width:850px){.stage,.batch-mode .stage{width:min(100%,calc(440px*var(--video-ratio,1)))}.crop-dock{gap:12px}}
+
+.format-options{border:0;padding:0;margin:0 0 12px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.format-options legend{font-size:12px;font-weight:600;margin-bottom:8px}
+.format-options label{display:grid;grid-template-columns:16px 1fr auto;align-items:center;gap:7px;font-size:12px;cursor:pointer;min-height:27px}
+.format-options input{margin:0;width:15px;height:15px}.format-options label span{color:var(--muted);font-size:11px}
+.batch-mode .settings .format-options{grid-column:1/-1;margin-bottom:4px}
+.auto-preview-status{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 10px;overflow-wrap:anywhere;min-height:18px}
+.result-format{display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:10px}.result-format select{flex:1;min-width:0}
+.reset-crop{font-size:11px;margin-top:2px;text-align:left}.output-path{white-space:pre-line}
+:root{--muted:#586a82;--accent:#216bd0}
+.primary-button,.workflow-switch button[aria-pressed=true]{background:#216bd0;border-color:#1d60bd}
+footer .text-button{font-size:11px}.timeline-track>div{padding-block:7px}

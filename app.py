@@ -25,7 +25,8 @@ cv2.setNumThreads(2)  # Leave CPU capacity for WebView and input while importing
 from flask import Flask, jsonify, request, send_file, abort
 from waitress import create_server
 
-from engine import RESOURCES, Cancelled, make_proxy, probe, render, video_bitrate
+from engine import RESOURCES, Cancelled, make_proxy, probe, render, video_bitrate, output_dimensions
+from notifications import TrayNotifications
 from batching import VIDEO_EXTENSIONS, model_score, group_sources, safe_folder, is_generated_video
 from version import VERSION
 from updater import Updater
@@ -46,7 +47,9 @@ imports = {}
 batches = {}
 lock = threading.Lock()
 import_slots = threading.Semaphore(2)
+render_slots = threading.Semaphore(1)
 window = None
+notifications = TrayNotifications(RESOURCES / "assets/icon.ico")
 shell_paths = []
 shell_updated = 0
 updater = Updater(BASE / "updates")
@@ -56,11 +59,34 @@ SETTINGS_FILE = BASE / "settings.json"
 
 
 def load_preferences():
+    defaults = dict(save_processing_log=False, mode="smart", bitrate_kbps=2500, sensitivity=40)
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        return {"save_processing_log": data.get("save_processing_log") is True}
+        return defaults | preference_updates(data)
     except (OSError, ValueError, AttributeError):
-        return {"save_processing_log": False}
+        return defaults
+
+
+def preference_updates(data):
+    if not isinstance(data, dict):
+        raise ValueError("Некорректные настройки.")
+    result = {}
+    for key, value in data.items():
+        if key == "save_processing_log":
+            if not isinstance(value, bool):
+                raise ValueError("Настройка должна быть включена или выключена.")
+        elif key == "mode":
+            if value not in ("smart", "template"):
+                raise ValueError("Неизвестный режим монтажа.")
+        elif key == "bitrate_kbps":
+            value = video_bitrate({key: value})
+        elif key == "sensitivity":
+            if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 100:
+                raise ValueError("Удаление пауз должно быть от 0 до 100%.")
+        else:
+            continue
+        result[key] = value
+    return result
 
 
 preferences = load_preferences()
@@ -69,18 +95,18 @@ preferences = load_preferences()
 @app.post("/api/settings")
 def save_preferences():
     data = request.get_json(silent=True) or {}
-    value = data.get("save_processing_log")
-    if not isinstance(value, bool):
-        return jsonify(error="Настройка должна быть включена или выключена."), 400
     try:
+        updates = preference_updates(data)
+        if not updates:
+            raise ValueError("Не переданы настройки для сохранения.")
         with lock:
-            updated = {"save_processing_log": value}
+            updated = preferences | updates
             temporary = SETTINGS_FILE.with_suffix(".tmp")
             temporary.write_text(json.dumps(updated), encoding="utf-8")
             temporary.replace(SETTINGS_FILE)
             preferences.update(updated)
         return jsonify(updated)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         return jsonify(error=str(exc)), 400
 
 
@@ -115,7 +141,7 @@ def request_finished(_):
 def headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cache-Control"] = "private, max-age=3600" if request.path.startswith(("/media/", "/result/", "/poster/")) else "no-store"
     return response
 
 
@@ -181,12 +207,21 @@ def public_source(entry):
         "preview": f"/media/{entry['id']}", "poster": f"/poster/{entry['id']}"}
 
 
-def register_source(path, folder, name, relative=None, cancel=None):
+def register_source(path, folder, name, relative=None, cancel=None, progress=None):
+    if progress:
+        progress(.01, "Проверяем видео")
     info = probe(path)
     if path.stat().st_size > 2 * 1024**3:
         raise ValueError("Файл больше 2 ГБ.")
-    preview = folder / "preview.mp4"
-    make_proxy(path, info, preview, cancel)
+    if cancel and cancel.is_set():
+        raise Cancelled()
+    direct = info["codec"] == "h264" and not info["hdr"] and path.suffix.lower() == ".mp4" and max(info["width"], info["height"]) <= 1280
+    preview = path if direct else folder / "preview.mp4"
+    if not direct:
+        make_proxy(path, info, preview, cancel,
+                   (lambda value: progress(.03 + value * .9, "Готовим превью")) if progress else None)
+    if progress:
+        progress(.95, "Готовим миниатюру")
     cap = cv2.VideoCapture(str(preview))
     cap.set(cv2.CAP_PROP_POS_MSEC, min(3, info["duration"]/2)*1000)
     ok, frame = cap.read()
@@ -199,6 +234,8 @@ def register_source(path, folder, name, relative=None, cancel=None):
                  preview_path=preview, model_score=model_score(preview))
     with lock:
         sources[key] = entry
+    if progress:
+        progress(1, "Готово")
     return entry
 
 
@@ -269,27 +306,41 @@ def poster(key):
     entry = sources.get(key)
     if not entry:
         abort(404)
-    return send_file(entry["preview_path"].parent / "poster.jpg", conditional=True)
+    return send_file(WORK / key / "poster.jpg", conditional=True)
 
 
 def validate_settings(data):
-    mode = data.get("mode", "template")
+    mode = data.get("mode", preferences["mode"])
     transition = data.get("transition", "lens")
     crops = data.get("crops", [.824, .5])
-    sensitivity = float(data.get("sensitivity", 40))
+    crops_x = data.get("crops_x", [.5, .5])
+    sensitivity = float(data.get("sensitivity", preferences["sensitivity"]))
     if mode not in ("template", "smart") or transition not in ("lens", "morph", "cut"):
         raise ValueError("Неизвестный режим монтажа.")
-    if len(crops) != 2 or any(not isinstance(c, (float, int)) or
-                            not math.isfinite(c) or not 0 <= c <= 1 for c in crops):
+    if any(not isinstance(values, list) or len(values) != 2 or any(
+            isinstance(c, bool) or not isinstance(c, (float, int)) or
+            not math.isfinite(c) or not 0 <= c <= 1 for c in values) for values in (crops, crops_x)):
         raise ValueError("Положение кадра должно быть от 0 до 100%.")
     if not math.isfinite(sensitivity) or not 0 <= sensitivity <= 100:
         raise ValueError("Чувствительность должна быть от 0 до 100.")
-    return dict(mode=mode, transition=transition, crops=crops, sensitivity=sensitivity,
-                bitrate_kbps=video_bitrate(data))
+    output_dimensions(data)
+    formats = data.get("formats", [data.get("format", "standard")])
+    if not isinstance(formats, list) or not 1 <= len(formats) <= 3 or any(
+            not isinstance(name, str) or name not in ("standard", "marketplace", "vertical") for name in formats) or len(set(formats)) != len(formats):
+        raise ValueError("Выберите от одного до трёх разных разрешений.")
+    return dict(mode=mode, transition=transition, crops=crops, crops_x=crops_x, sensitivity=sensitivity,
+                format=data.get("format", formats[0]), formats=formats,
+                bitrate_kbps=video_bitrate(data if "bitrate_kbps" in data else {"bitrate_kbps":preferences["bitrate_kbps"]}))
 
 
 def busy():
-    return any(j["status"] in ("running", "queued") for j in jobs.values())
+    return any(j["status"] in ("running", "queued") and not j.get("preview") for j in jobs.values())
+
+
+def cancel_previews():
+    for job in jobs.values():
+        if job.get("preview") and job["status"] in ("running", "queued"):
+            job["cancel"].set()
 
 
 def article_number(data):
@@ -324,9 +375,13 @@ def output_path(data, key):
     dest = base if base.name == article else base / article
     if not dest.resolve().is_relative_to(base):
         raise ValueError("Недопустимая папка экспорта.")
-    filename = dest / f"{article}.mp4"
-    used = {str(j["output"]).casefold() for j in jobs.values()
-            if j["status"] in ("running", "queued")}
+    suffix = ""
+    if data.get("_variant"):
+        width, height = output_dimensions({"format":data["_variant"]})
+        suffix = f"_{width}x{height}"
+    filename = dest / f"{article}{suffix}.mp4"
+    used = {str(variant["output"]).casefold() for j in jobs.values()
+            if j["status"] in ("running", "queued") for variant in j.get("variants", [{"output":j["output"]}])}
     if filename.exists() or str(filename).casefold() in used:
         raise ValueError(f"Файл уже существует или поставлен в очередь: {filename}. Переместите его перед повторным экспортом.")
     return filename
@@ -336,7 +391,7 @@ def archive_targets(job):
     folder = job["output"].parent / "Руки + Ноги"
     if folder.is_symlink() or not folder.resolve().is_relative_to(job["output"].parent.resolve()):
         raise ValueError("Недопустимая папка исходников.")
-    return [(sources[key], folder / f"{job['output'].stem}_{role}{sources[key]['path'].suffix.lower()}")
+    return [(sources[key], folder / f"{job.get('article', job['output'].stem)}_{role}{sources[key]['path'].suffix.lower()}")
             for key, role in zip(job["source_ids"], ("ноги", "руки"))]
 
 
@@ -381,18 +436,25 @@ def archive_sources(job):
             for entry in sources.values():
                 if entry["path"] == original:
                     entry["path"] = target
+                if entry.get("preview_path") == original:
+                    entry["preview_path"] = target
 
 
-def create_job(data, status="running"):
+def create_job(data, status="running", preview=False):
     settings = validate_settings(data)
+    settings["preview"] = preview
     ids = data.get("sources", [])
     if len(ids) != 2 or any(s not in sources for s in ids):
         raise ValueError("Добавьте видео «Модель» и «Руки».")
     if ids[0] == ids[1] or sources[ids[0]]["path"].resolve() == sources[ids[1]]["path"].resolve():
         raise ValueError("Модель и руки должны быть разными файлами.")
     key = uuid.uuid4().hex
+    variants = ([dict(format=settings["format"], output=WORK / key / "preview.mp4")] if preview else
+                [dict(format=name, output=output_path(data | ({"_variant":name} if len(settings["formats"]) > 1 else {}), key)) for name in settings["formats"]])
     job = dict(id=key, status=status, progress=0, stage="В очереди" if status == "queued" else "Начинаем",
-               cancel=threading.Event(), output=output_path(data, key),
+               cancel=threading.Event(), output=variants[0]["output"], variants=variants,
+               article=None if preview else article_number(data),
+               preview=preview,
                settings=settings, source_ids=list(ids), item_id=data.get("item_id"),
                save_processing_log=preferences["save_processing_log"])
     jobs[key] = job
@@ -400,6 +462,11 @@ def create_job(data, status="running"):
 
 
 def execute_job(job):
+    with render_slots:
+        _execute_job(job)
+
+
+def _execute_job(job):
     folder = WORK / job["id"]
     folder.mkdir(exist_ok=True)
     selected = [sources[s] for s in job["source_ids"]]
@@ -407,21 +474,39 @@ def execute_job(job):
         with lock:
             job.update(progress=round(value), stage=stage)
     destination_existed = job["output"].parent.exists()
+    created_outputs = []
+    rendered_all = False
     try:
         if job["cancel"].is_set():
             raise Cancelled()
         with lock:
             job.update(status="running")
-        check_archive(job)
+        if not job["preview"]:
+            check_archive(job)
         job["output"].parent.mkdir(parents=True, exist_ok=True)
-        report = render([s["path"] for s in selected], [s["info"] for s in selected],
-                        job["settings"], folder, job["output"], progress, job["cancel"])
-        archive_sources(job)
-        if job["save_processing_log"]:
+        inputs = [s["preview_path"] if job["preview"] else s["path"] for s in selected]
+        infos = [dict(s["info"], hdr=False) if job["preview"] else s["info"] for s in selected]
+        variants = job["variants"]
+        for index, variant in enumerate(variants):
+            if job["cancel"].is_set():
+                raise Cancelled()
+            settings = job["settings"] | {"format":variant["format"]}
+            def variant_progress(value, stage):
+                progress(min(99, (index + value / 100) / len(variants) * 100),
+                         f"{index+1}/{len(variants)} · {stage}" if len(variants) > 1 else stage)
+            report = render(inputs, infos, settings, folder, variant["output"], variant_progress, job["cancel"])
+            created_outputs.append(variant["output"])
+            variant.update(report=report, status="done")
+        if job["cancel"].is_set():
+            raise Cancelled()
+        rendered_all = True
+        if not job["preview"]:
+            archive_sources(job)
+        if job["save_processing_log"] and not job["preview"]:
             with (job["output"].parent / "монтаж.txt").open("x", encoding="utf-8") as log:
                 json.dump(report, log, ensure_ascii=False, indent=2)
         with lock:
-            job.update(status="done", report=report)
+            job.update(status="done", report=variants[0]["report"], progress=100, stage="Видео готово")
     except Cancelled:
         with lock:
             job.update(status="cancelled", stage="Экспорт отменён")
@@ -431,27 +516,51 @@ def execute_job(job):
             job.update(status="error", error=str(exc), stage=("Видео сохранено; ошибка организации файлов"
                        if job["output"].exists() else "Не удалось собрать видео"))
     finally:
+        if not rendered_all:
+            for output in created_outputs:
+                output.unlink(missing_ok=True)
+            for variant in job["variants"]:
+                variant.pop("report", None)
+                variant.pop("status", None)
         if not destination_existed and job["output"].parent.is_dir():
             try:
                 job["output"].parent.rmdir()  # Only remove a newly created, empty destination.
             except OSError:
                 pass
+        if not job["preview"] and not job.get("batch_id") and job["status"] in ("done", "error"):
+            title = "Превью готово" if job["preview"] else "Видео готово"
+            notifications.notify(window, title if job["status"] == "done" else "Ошибка сборки",
+                                 job.get("error") or ("Можно посмотреть результат в приложении." if job["preview"] else str(job["output"])),
+                                 job["status"] == "error")
 
 
 def job_view(job):
-    result = {k: v for k, v in job.items() if k not in ("cancel", "output", "thread")}
+    result = {k: v for k, v in job.items() if k not in ("cancel", "output", "thread", "variants")}
     result["output"] = str(job["output"])
+    result["variants"] = [v | {"output":str(v["output"])} for v in job["variants"]]
     return result
 
 
 @app.post("/api/render")
+@app.post("/api/preview")
 def start_render():
     data = request.get_json(silent=True) or {}
     try:
         with lock:
             if busy():
                 return jsonify(error="Дождитесь текущего экспорта или отмените его."), 409
-            job = create_job(data)
+            preview = request.path == "/api/preview"
+            if preview:
+                settings = validate_settings(data)
+                cache_settings = {k:v for k,v in settings.items() if k not in ("bitrate_kbps", "formats")}
+                signature = json.dumps([data.get("sources"), cache_settings], sort_keys=True)
+                cached = next((j for j in jobs.values() if j.get("signature") == signature and j["status"] == "done" and j["output"].exists()), None)
+                if cached:
+                    return jsonify(id=cached["id"], cached=True)
+            cancel_previews()
+            job = create_job(data, preview=preview)
+            if preview:
+                job["signature"] = signature
         job["thread"] = threading.Thread(target=execute_job, args=(job,), daemon=True)
         job["thread"].start()
         return jsonify(id=job["id"])
@@ -485,7 +594,11 @@ def result(key):
         job = jobs.get(key)
         if not job or job["status"] != "done":
             abort(404)
-    return send_file(job["output"], conditional=True,
+    name = request.args.get("format")
+    variant = next((v for v in job["variants"] if v["format"] == name), None) if name else job["variants"][0]
+    if variant is None:
+        abort(404)
+    return send_file(variant["output"], conditional=True,
                      as_attachment=request.args.get("download") == "1")
 
 
@@ -544,29 +657,52 @@ def import_directory():
 
 
 def start_import(files, skipped=0, display_names=None):
+    from concurrent.futures import ThreadPoolExecutor
     key = uuid.uuid4().hex
     task = dict(id=key, status="running", processed=0, total=len(files), errors=[], skipped=skipped,
-                groups=[], cancel=threading.Event())
+                groups=[], progress=0, stage="Ожидаем импорт", current="", eta_seconds=None,
+                cancel=threading.Event())
     imports[key] = task
-    def worker():
-        entries = []
-        for index, (path, relative) in enumerate(sorted(files)):
-            if task["cancel"].is_set():
-                break
-            folder = WORK / uuid.uuid4().hex
-            folder.mkdir()
-            try:
-                with import_slots:
-                    if task["cancel"].is_set():
-                        break
-                    entry = register_source(path, folder, (display_names or {}).get(path, path.name), relative, task["cancel"])
-                entries.append(public_source(entry))
-            except Exception as exc:
+    started = time.monotonic()
+    fractions = [0.] * len(files)
+    def update(index, fraction, stage, relative):
+        with lock:
+            fractions[index] = fraction
+            value = sum(fractions) / len(files)
+            elapsed = time.monotonic() - started
+            task.update(progress=round(value * 100, 1), stage=stage, current=relative,
+                        eta_seconds=round(elapsed / value * (1 - value)) if value > .03 and elapsed > 2 else None)
+    def prepare(index, path, relative):
+        folder = WORK / uuid.uuid4().hex
+        folder.mkdir()
+        try:
+            with import_slots:
+                if task["cancel"].is_set():
+                    return None
+                entry = register_source(path, folder, (display_names or {}).get(path, path.name), relative,
+                                        task["cancel"], lambda value, stage: update(index, value, stage, relative))
+            return public_source(entry)
+        except Cancelled:
+            return None
+        except Exception as exc:
+            with lock:
                 task["errors"].append(dict(file=relative, error=str(exc)))
+            return None
+        finally:
+            with lock:
+                task["processed"] += 1
+            if not task["cancel"].is_set():
+                update(index, 1, "Готово", relative)
+            if not (WORK / folder.name / "poster.jpg").exists():
                 shutil.rmtree(folder, ignore_errors=True)
-            task["processed"] = index+1
+    def worker():
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            entries = [entry for entry in pool.map(lambda args: prepare(*args),
+                       ((index, path, relative) for index, (path, relative) in enumerate(sorted(files)))) if entry]
         task["groups"] = group_sources(entries)
         task["status"] = "cancelled" if task["cancel"].is_set() else "done"
+        if task["status"] == "done":
+            notifications.notify(window, "Импорт завершён", f"Подготовлено {len(entries)} из {len(files)} видео. Ошибок: {len(task['errors'])}.")
     task["thread"] = threading.Thread(target=worker, daemon=True)
     task["thread"].start()
     return jsonify(id=key)
@@ -661,6 +797,7 @@ def render_batch():
                 if len(paths) != 2 or used_sources & paths:
                     raise ValueError("Каждый исходный файл можно использовать только в одном артикуле очереди.")
                 used_sources.update(paths)
+            cancel_previews()
             selected = []
             try:
                 for item in items:
@@ -674,6 +811,8 @@ def render_batch():
             batch = dict(id=key, jobs=[j["id"] for j in selected], status="running",
                          cancel=threading.Event())
             batches[key] = batch
+            for job in selected:
+                job["batch_id"] = key
         def worker():
             for job in selected:
                 if batch["cancel"].is_set():
@@ -682,6 +821,9 @@ def render_batch():
             with lock:
                 batch["status"] = ("cancelled" if batch["cancel"].is_set() else
                                    "done_with_errors" if any(j["status"] == "error" for j in selected) else "done")
+            if batch["status"] != "cancelled":
+                count = sum(j["status"] == "done" for j in selected)
+                notifications.notify(window, "Пакетная сборка завершена", f"Сохранено {count} из {len(selected)} роликов.", count != len(selected))
         batch["thread"] = threading.Thread(target=worker, daemon=True)
         batch["thread"].start()
         return jsonify(id=key)
@@ -716,18 +858,23 @@ def save_as(key):
         job = jobs.get(key)
         if not job or job["status"] != "done":
             abort(404)
+    name = (request.get_json(silent=True) or {}).get("format")
+    variant = next((v for v in job["variants"] if v["format"] == name), None) if name else job["variants"][0]
+    if variant is None:
+        return jsonify(error="Такой формат результата не найден."), 400
+    output = variant["output"]
     if window is None:
-        return jsonify(download=f"/result/{key}?download=1")
+        return jsonify(download=f"/result/{key}?download=1&format={variant['format']}")
     import webview
     dest = window.create_file_dialog(webview.FileDialog.SAVE, directory=str(OUTPUT),
-                                    save_filename=job["output"].name,
+                                    save_filename=output.name,
                                     file_types=("Видео MP4 (*.mp4)",))
     if dest:
         if isinstance(dest, (tuple, list)):
             dest = dest[0]
         dest = Path(dest).with_suffix(".mp4")
-        if dest.resolve() != job["output"].resolve():
-            shutil.copy2(job["output"], dest)
+        if dest.resolve() != output.resolve():
+            shutil.copy2(output, dest)
         return jsonify(saved=str(dest))
     return jsonify(cancelled=True)
 

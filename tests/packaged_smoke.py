@@ -1,5 +1,6 @@
 """Run the packaged app with Cyrillic paths, no Python/FFmpeg in PATH."""
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -37,7 +38,7 @@ def main():
             raise RuntimeError("Packaged app did not start")
         assert data["version"] == VERSION, data
         assert "Профиль" in data["output"], data
-        for resource in ("/", "/reference", "/ui/app.js", "/ui/updates.js", "/api/updates"):
+        for resource in ("/", "/reference", "/ui/app.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
             with urllib.request.urlopen("http://127.0.0.1:8771" + resource) as response:
                 assert response.status == 200
         ffprobe = target / "_internal" / "bin" / "ffprobe.exe"
@@ -45,7 +46,26 @@ def main():
                                  str(target / "_internal/assets/reference.mp4")], env=env,
                                 capture_output=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
         assert json.loads(result.stdout)["streams"][0]["width"] == 1080
-        print("PASS: packaged app, Cyrillic install/profile paths, isolated PATH, assets, updater and bundled FFprobe.")
+        with urllib.request.urlopen("http://127.0.0.1:8771/") as response:
+            html=response.read().decode('utf-8')
+        token=re.search(r'name="outmax-token" content="([^"]+)"',html).group(1)
+        assert 'id="previewButton"' not in html
+        assert data['preferences']['mode']=='smart'
+        selected={'mode':'template','bitrate_kbps':750,'sensitivity':73}
+        req=urllib.request.Request('http://127.0.0.1:8771/api/settings',json.dumps(selected).encode(),
+                                   {'Content-Type':'application/json','X-Outmax-Token':token})
+        with urllib.request.urlopen(req) as response:assert response.status==200
+        process.terminate();process.wait(20)
+        process=subprocess.Popen([str(target/'OUTMAX-Cut.exe'),'--no-open','--port','8771'],env=env,creationflags=subprocess.CREATE_NO_WINDOW)
+        for attempt in range(60):
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:8771/api/config',timeout=2) as response:
+                    restored=json.load(response)['preferences']
+                break
+            except OSError:time.sleep(.5)
+        else:raise RuntimeError('Packaged restart failed')
+        assert all(restored[key]==value for key,value in selected.items()),restored
+        print("PASS: packaged app, Cyrillic paths, isolated PATH, auto-preview assets, bundled FFprobe, defaults persist after process restart.")
     finally:
         process.terminate()
         process.wait(20)

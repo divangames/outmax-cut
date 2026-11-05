@@ -1,6 +1,6 @@
 /* Batch state stays independent for each product, sharing the single-clip editor. */
 (() => {
-  const defaults = () => ({mode:'template',transition:'lens',crops:[.824,.5],sensitivity:40,bitrate_kbps:2500});
+  const defaults = () => editorDefaults();
   const batch = {mode:false,items:[],active:null,single:null,importing:false,importId:null,
     cancelImport:false,running:false,id:null,native:false,loading:false,collecting:false};
   const rows=new Map();
@@ -72,7 +72,7 @@
     $('editorWorkspace').hidden=false;$('batchDetail').hidden=false;
     batch.loading=true;loadEditor(item.snapshot);batch.loading=false;
     detailSelectors(item);
-    if(!item.snapshot.result)window.previewSource?.(0);
+    if(!item.snapshot.result&&!item.snapshot.preview)window.previewSource?.(0);
     for(const [key,row] of rows)row.classList.toggle('selected',key===id);
     refreshLocks();
   }
@@ -110,7 +110,7 @@
     refreshLocks();
   }
   function patchRow(row,item){
-    const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>s?.id),...item.snapshot.settings.crops].join('|');
+    const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>s?.id),...item.snapshot.settings.crops,...item.snapshot.settings.crops_x,item.snapshot.settings.format].join('|');
     if(row.dataset.visualKey===visualKey)return;
     row.dataset.visualKey=visualKey;
     row.classList.toggle('selected',item.id===batch.active);
@@ -119,11 +119,11 @@
     open.title=item.name+' · '+item.detection;
     for(let i=0;i<2;i++){
       const source=item.snapshot.sources[i],cell=row.querySelectorAll('.pair-preview')[i];
-      const signature=(source?.id||'')+':'+item.snapshot.settings.crops[i];
+      const signature=[source?.id,item.snapshot.settings.crops[i],item.snapshot.settings.crops_x[i],item.snapshot.settings.format].join(':');
       if(cell.dataset.signature===signature)continue;
       cell.dataset.signature=signature;cell.replaceChildren();
       const label=document.createElement('span');label.textContent=source?.name||(i===0?'Нет видео ног':'Нет видео рук');
-      if(source){const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=source.poster;img.alt='';img.width=48;img.height=48;img.style.objectPosition=`50% ${item.snapshot.settings.crops[i]*100}%`;cell.append(img);}
+      if(source){const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=source.poster;img.alt='';img.width=48;img.height=48;img.style.objectPosition=`${item.snapshot.settings.crops_x[i]*100}% ${item.snapshot.settings.crops[i]*100}%`;const [w,h]=formatSpecs[item.snapshot.settings.format];img.style.aspectRatio=`${w}/${h}`;img.style.height='auto';cell.append(img);}
       else {const empty=document.createElement('span');empty.className='no-source';empty.textContent='—';cell.append(empty);}
       cell.append(label);
     }
@@ -166,6 +166,7 @@
     paintFrame=requestAnimationFrame(()=>{paintFrame=null;const item=current();if(item&&rows.has(item.id))patchRow(rows.get(item.id),item);updateRows();});
   }
   function changedItem(item){
+    item.snapshot.preview=null;
     item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;
     item.detection='Порядок и настройки заданы вручную.';
     if(item.id===batch.active){batch.loading=true;loadEditor(item.snapshot);batch.loading=false;detailSelectors(item);}
@@ -178,6 +179,7 @@
     changedItem(item);
   }
   async function addGroups(groups){
+    await preferencesReady;
     const newItems=groups.map(group=>({
       ...group,id:crypto.randomUUID(),selected:group.sources.every(Boolean),status:'ready',
       snapshot:{sources:group.sources.map(id=>group.candidates.find(c=>c.id===id)||null),
@@ -191,6 +193,7 @@
     $('batchImportNotice').textContent='';
     $('batchImportStatus').hidden=false;$('cancelImportButton').disabled=false;
     $('batchImportText').textContent='Ищем видео и готовим предпросмотр…';refreshLocks();
+    $('batchImportProgress').removeAttribute('value');
   }
   function endImport(){
     batch.importing=false;batch.importId=null;$('batchImportStatus').hidden=true;
@@ -200,7 +203,8 @@
   async function pollImport(){
     try{
       const task=await api(`/api/imports/${batch.importId}`);
-      $('batchImportText').textContent=`Готовим исходники · ${task.processed} из ${task.total}`;
+      $('batchImportText').textContent=`${task.processed} из ${task.total} · ${importLabel(task)}${task.current?' · '+task.current:''}`;
+      $('batchImportProgress').value=task.progress||0;
       if(task.status==='running'){setTimeout(pollImport,700);return;}
       await addGroups(task.groups);endImport();
       if(task.skipped)$('batchImportNotice').textContent=`Готовые экспорты OUTMAX пропущены: ${task.skipped}.`;
@@ -250,7 +254,11 @@
         const {file,relative}=videos[i];
         if(file.size>2*1024**3){failures.push(relative+': файл больше 2 ГБ');continue;}
         const form=new FormData();form.append('file',file);form.append('relative',relative);
-        try{ids.push((await prepareSource('/api/upload',form)).id);}catch(e){failures.push(relative+': '+e.message);}
+        try{ids.push((await prepareSource('/api/upload',form,task=>{
+          $('batchImportText').textContent=`${i+1} из ${videos.length} · ${relative} · ${importLabel(task)}`;
+          $('batchImportProgress').value=(i+(task.transfer?task.progress/100*.1:.1+task.progress/100*.9))/videos.length*100;
+          if(batch.cancelImport&&task.id&&task.status==='running')api(`/api/imports/${task.id}/cancel`,{}).catch(()=>{});
+        })).id);}catch(e){failures.push(relative+': '+e.message);}
       }
       const grouped=await api('/api/batch/group',{sources:ids});await addGroups(grouped.groups);endImport();
       if(skipped)$('batchImportNotice').textContent=`Готовые экспорты OUTMAX пропущены: ${skipped}.`;
@@ -285,12 +293,14 @@
       batch.running=false;state.externalLocked=false;$('batchCancelButton').hidden=true;
       $('batchSummary').textContent=run.status==='cancelled'?'Очередь отменена. Готовые файлы сохранены.':run.status==='done_with_errors'?'Очередь завершена с ошибками. Их причины указаны у роликов.':`Готово. Сохранено ${run.jobs.length} роликов.`;
       refresh();refreshLocks();
+      window.autoPreview?.schedule();
     }catch(e){error('Не удалось обновить очередь. Повторяем проверку…');setTimeout(pollBatch,2000);}
   }
   async function exportSelected(){
     if(locked())return;
     remember();const chosen=batch.items.filter(i=>i.selected&&ready(i));if(!chosen.length)return;
     batch.running=true;state.externalLocked=true;error('');refresh();
+    window.autoPreview?.cancel();
     try{
       const run=await api('/api/batch/render',{output:$('batchOutputPath').value.trim(),
         items:chosen.map(i=>({item_id:i.id,name:i.name,sources:i.snapshot.sources.map(s=>s.id),...i.snapshot.settings}))});
@@ -302,7 +312,8 @@
     refreshLocks,
     selectAll(checked){if(locked())return;batch.items.forEach(item=>item.selected=checked&&ready(item));updateRows();},
     changed(){if(batch.mode&&!batch.loading){remember();scheduleCurrent();}},
-    completed(job){if(!batch.mode||!current())return;remember();current().status=job.status;current().error=job.error;renderList();},
+    previewCompleted(){if(batch.mode&&!batch.loading){remember();scheduleCurrent();}},
+    completed(job){if(!batch.mode||!current())return;remember();if(!job.preview){current().status=job.status;current().error=job.error;}renderList();},
     exportContext(){return batch.mode&&current()?{folder:current().name,output:$('batchOutputPath').value.trim(),item_id:current().id}:{output:$('batchOutputPath').value.trim()};},
     folderContext(){return {path:$('batchOutputPath').value.trim()};}
   };
@@ -347,7 +358,7 @@
   $('applySettingsButton').onclick=()=>{
     if(locked()||!current())return;remember();const settings=structuredClone(current().snapshot.settings);
     const others=batch.items.filter(item=>item.id!==batch.active);
-    for(const item of others){item.snapshot.settings=structuredClone(settings);item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
+    for(const item of others){item.snapshot.settings=structuredClone(settings);item.snapshot.preview=null;item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
     batch.loading=true;loadEditor(current().snapshot);batch.loading=false;renderList();
     $('batchDetailNote').textContent=`Настройки применены к остальным роликам: ${others.length}. Режим, переход, кадрирование, удаление пауз и битрейт скопированы.`;
   };
