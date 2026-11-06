@@ -32,7 +32,7 @@
       action('Скопировать настройки',()=>W.copy(item)),action('Вставить настройки…',()=>W.paste(item),edit||!W.copied),
       action('Применить настройки выделенным…',()=>{B.remember();return W.chooseFields(item.snapshot.settings,selected());},edit||!selected().length),
       action('Сохранить как пресет…',()=>{B.open(item.id);return W.savePreset();},edit),
-      group('Применить пресет',W.presets.length?W.presets.map(p=>action(p.name,()=>W.apply(p.settings,[item.id]),edit)):[action('Пресетов пока нет',()=>{},true)]),
+      group('Применить пресет',W.presets.length?W.presets.map(p=>action(p.name,()=>W.usePreset(p.id,[item.id]),edit)):[action('Пресетов пока нет',()=>{},true)]),
       group('Сбросить',[action('Положение кадра',()=>reset(item,['crops','crops_x']),edit),action('Масштаб',()=>reset(item,['zooms']),edit),action('Монтажные границы',()=>reset(item,['trims']),edit),action('Все настройки',()=>reset(item,Object.keys(editorDefaults())),edit)]),null,
       group('Переместить',[action('В начало',()=>B.move(item.id,'first'),edit),action('Выше',()=>B.move(item.id,-1),edit),action('Ниже',()=>B.move(item.id,1),edit),action('В конец',()=>B.move(item.id,'last'),edit)]),
       action('Экспортировать этот товар',()=>B.export({ids:[item.id],repeat:!!item.snapshot.result}),edit||!hasPair),

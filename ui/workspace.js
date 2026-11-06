@@ -41,7 +41,7 @@
     }
   }
   async function flush(){
-    if(initializing)return;
+    if(initializing||state.backgroundMode)return;
     const payload=B.persistPayload(),value=JSON.stringify(payload);if(value===lastSaved)return saving;
     notify('Сохраняем очередь…');
     saving=saving.catch(()=>{}).then(()=>api('/api/session',payload)).then(()=>{lastSaved=value;notify('Очередь сохранена');}).catch(error=>{notify('Не удалось сохранить очередь: '+error.message);throw error;});
@@ -52,7 +52,7 @@
   $('queueSearch').oninput=filter;$('queueFilter').onchange=filter;$('resetQueueFilter').onclick=()=>{$('queueSearch').value='';$('queueFilter').value='all';filter();};
   $('mainVideo').addEventListener('pause',()=>{if(!initializing)flush().catch(()=>{});});
   setInterval(()=>{if(!initializing&&!document.hidden)flush().catch(()=>{});},5000);
-  window.addEventListener('pagehide',()=>{if(!initializing)fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json','X-Outmax-Token':token},body:JSON.stringify(B.persistPayload()),keepalive:true}).catch(()=>{});});
+  window.addEventListener('pagehide',()=>{if(!initializing&&!state.backgroundMode)fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json','X-Outmax-Token':token},body:JSON.stringify(B.persistPayload()),keepalive:true}).catch(()=>{});});
   function paintPresets(){const previous=$('presetSelect').value;$('presetSelect').replaceChildren(new Option('Выберите пресет…',''));for(const preset of presets)$('presetSelect').add(new Option(preset.name,preset.id));$('presetSelect').value=presets.some(p=>p.id===previous)?previous:'';B.refreshLocks();}
   $('presetSelect').onchange=()=>B.refreshLocks();
   async function ensureFormats(settings){
@@ -67,6 +67,7 @@
     else {const snapshot=editorSnapshot();for(const key of keys)if(settings[key]!==undefined)snapshot.settings[key]=structuredClone(settings[key]);snapshot.preview=null;snapshot.stale=!!snapshot.result;loadEditor(snapshot);}
     schedule();
   }
+  async function usePreset(id,ids=null){const preset=presets.find(p=>p.id===id);if(!preset)return;await api('/api/automation/preset',{id});$('presetSelect').value=id;return apply(preset.settings,ids);}
   async function chooseFields(settings,ids){
     if(B.locked||!ids.length)return;
     const groups=[['frame','Положение кадра',['crops','crops_x']],['zoom','Масштаб',['zooms']],['mode','Режим монтажа',['mode']],['transition','Переход',['transition']],['formats','Форматы экспорта',['formats','format','format_catalog']],['pauses','Удаление пауз',['sensitivity']],['bitrate','Битрейт',['bitrate_kbps']],['trims','Ручные границы исходников',['trims']]];
@@ -100,7 +101,7 @@
     if(command.action==='new'){const keep=new Set(items.map(item=>item.id));for(const item of [...B.items])if(!keep.has(item.id))B.remove(item.id);}
     if(['model','hands'].includes(command.action))for(const item of items){const source=item.candidates[0];item.snapshot.sources=command.action==='model'?[source,null]:[null,source];item.selected=false;item.status='changed';} 
     if(items.length&&B.current&&['model','hands'].includes(command.action))B.open(items[0].id);
-    if(command.action==='preset'){const preset=presets.find(p=>p.id===command.preset);if(!preset){notify('Пресет удалён. Выберите другой.');return;}await apply(preset.settings,items.map(item=>item.id));}
+    if(command.action==='preset'){const preset=presets.find(p=>p.id===command.preset);if(!preset){notify('Пресет удалён. Выберите другой.');return;}await usePreset(preset.id,items.map(item=>item.id));}
     if(command.action==='quick'&&B.lastSettings)await apply(B.lastSettings,items.map(item=>item.id));
     if(['quick','preset','new-only'].includes(command.action))await exportNew(items);
     if(command.action==='check')await verify(items);B.render();schedule();
@@ -116,10 +117,15 @@
     const result=await ask('Открыть сохранённый пакет',[{id:'archive',label:'Пакет',type:'select',options:data.archives.map(item=>[item.id,item.name+' · товаров '+item.count])}],'Открыть');
     if(result){await archive();await B.restore(await api('/api/session?archive='+result.archive));schedule();}
   }
+  async function activateEditor(){
+    if(state.backgroundMode){initializing=true;state.backgroundMode=false;const active=state.automationRunning;state.automationRunning=false;
+      try{await B.restore(await api('/api/session'));}finally{state.automationRunning=active;initializing=false;if(active)window.autoPreview?.cancel();refresh();schedule();}}
+    if(!state.automationRunning)window.autoPreview?.schedule();
+  }
   $('queueHistory').onclick=()=>history().catch(error=>showError(error.message));
   $('applySelectedButton').onclick=()=>chooseFields(editorSnapshot().settings,B.items.filter(item=>item.selected).map(item=>item.id)).catch(error=>showError(error.message));
   $('savePreset').onclick=()=>savePreset().catch(error=>showError(error.message));$('managePresets').onclick=()=>managePresets().catch(error=>showError(error.message));
-  $('applyPreset').onclick=()=>{const preset=presets.find(p=>p.id===$('presetSelect').value);if(preset)apply(preset.settings).catch(error=>showError(error.message));};
-  window.batchWorkspace={ask,report,notify,flush,archive,history,apply,chooseFields,savePreset,verify,exportNew,imported,shellCommand,get presets(){return presets;},get copied(){return clipboard;},copy(item){B.remember();clipboard=structuredClone(item.snapshot.settings);notify('Настройки скопированы');},paste(item){if(clipboard)return chooseFields(clipboard,[item.id]);}};
-  window.workspaceReady=preferencesReady.then(async()=>{presets=(await api('/api/presets')).presets;paintPresets();const saved=await api('/api/session');if(saved.session)await B.restore(saved);if(saved.missing?.length)notify('Не найдены исходники: '+saved.missing.length+'. Замените их в роликах.');}).catch(error=>notify('Восстановление очереди: '+error.message)).finally(()=>{initializing=false;filter();schedule();});
+  $('applyPreset').onclick=()=>usePreset($('presetSelect').value).catch(error=>showError(error.message));
+  window.batchWorkspace={ask,report,notify,flush,archive,history,activateEditor,apply,usePreset,chooseFields,savePreset,verify,exportNew,imported,shellCommand,get presets(){return presets;},get copied(){return clipboard;},copy(item){B.remember();clipboard=structuredClone(item.snapshot.settings);notify('Настройки скопированы');},paste(item){if(clipboard)return chooseFields(clipboard,[item.id]);}};
+  window.workspaceReady=preferencesReady.then(async()=>{const savedPresets=await api('/api/presets');presets=savedPresets.presets;paintPresets();$('presetSelect').value=savedPresets.last_id||presets.at(-1)?.id||'';B.refreshLocks();const saved=await api('/api/session');if(saved.session)await B.restore(saved);if(saved.missing?.length)notify('Не найдены исходники: '+saved.missing.length+'. Замените их в роликах.');}).catch(error=>notify('Восстановление очереди: '+error.message)).finally(()=>{initializing=false;filter();schedule();});
 })();

@@ -37,6 +37,8 @@ def main():
         else:
             raise RuntimeError("Packaged app did not start")
         assert data["version"] == VERSION, data
+        with urllib.request.urlopen('http://127.0.0.1:8771/ui/automation.js') as response:assert response.status==200
+        with urllib.request.urlopen('http://127.0.0.1:8771/api/automation?summary=1') as response:assert json.load(response)['active'] is False
         assert "Профиль" in data["output"], data
         for resource in ("/", "/reference", "/ui/app.js", "/ui/formats.js", "/ui/timeline.js", "/ui/editor-extras.js", "/ui/workspace.js", "/ui/context-menu.js", "/ui/whats-new.js", "/ui/whats-new.json", "/ui/live-preview.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
             with urllib.request.urlopen("http://127.0.0.1:8771" + resource) as response:

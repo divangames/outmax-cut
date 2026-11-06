@@ -9,6 +9,7 @@
   }
   function schedule(delay=450){
     cancel();
+    if(state.backgroundMode||state.automationRunning){status('Превью доступно в редакторе после автосборки.');return;}
     if(state.sources.some(source=>!source)){
       status('Превью появится автоматически после добавления двух видео.');return;
     }

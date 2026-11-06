@@ -78,7 +78,7 @@ function markChanged(previewChanged=true) {
 }
 function refresh() {
   const count = state.sources.filter(Boolean).length;
-  const locked = state.running || state.externalLocked;
+  const locked = state.running || state.externalLocked || state.automationRunning;
   $('sourceCount').textContent = `${count} из 2`;
   $('renderButton').disabled = count !== 2 || locked || state.uploading.some(Boolean);
   document.querySelectorAll('#exportFormats input').forEach(input=>input.disabled=locked);
@@ -401,6 +401,7 @@ $('closeSettings').onclick = () => motion.closeDialog($('settingsDialog'));
 $('saveProcessingLog').disabled = true;
 const preferencesReady=api('/api/config').then(config => {
   nativeApp = config.native;
+  state.backgroundMode=!!config.background_start;
   editorPreferences.video_formats=config.preferences.video_formats;
   for(const key of ['mode','bitrate_kbps','sensitivity'])if(!touchedPreferences.has(key)){
     editorPreferences[key]=config.preferences[key]??editorPreferences[key];

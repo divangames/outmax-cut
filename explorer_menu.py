@@ -2,7 +2,7 @@
 from pathlib import Path
 
 SCOPES=['Directory','Directory\\Background']+[f'SystemFileAssociations\\{ext}' for ext in ('.mp4','.mov','.m4v','.mkv','.avi','.webm')]
-ACTIONS=[('add','Добавить в текущую очередь'),('new','Создать новый пакет'),('review','Открыть и проверить пары'),('quick','Быстрый экспорт — последние настройки'),('new-only','Экспортировать только новые товары'),('check','Проверить исходники'),('resume','Продолжить незавершённый пакет'),('results','Открыть папку результатов'),('settings','Настройки OUTMAX Cut')]
+ACTIONS=[('auto','Собрать автоматически'),('add','Добавить в текущую очередь'),('new','Создать новый пакет'),('review','Открыть и проверить пары'),('quick','Быстрый экспорт — последние настройки'),('new-only','Экспортировать только новые товары'),('check','Проверить исходники'),('resume','Продолжить незавершённый пакет'),('results','Открыть папку результатов'),('settings','Настройки OUTMAX Cut')]
 
 
 def menu_entries(presets, files=False):
@@ -29,6 +29,10 @@ def register_menu(executable, presets):
             winreg.DeleteKey(winreg.HKEY_CURRENT_USER,path)
         except FileNotFoundError:pass
     for scope in SCOPES:
+        direct='Software\\Classes\\'+scope+'\\shell\\OutmaxCutAuto'
+        argument='%V' if 'Background' in scope else '%1'
+        put(direct,{'':'Собрать видео автоматически','MUIVerb':'Собрать видео автоматически','Icon':f'"{executable}",0','MultiSelectModel':'Player'})
+        put(direct+'\\command',{'':f'"{executable}" --shell-action auto --open "{argument}"'})
         root='Software\\Classes\\'+scope+'\\shell\\OutmaxCut'
         remove(root+'\\command');remove(root+'\\shell')
         put(root,{'':'OUTMAX Cut','MUIVerb':'OUTMAX Cut','SubCommands':'','Icon':f'"{executable}",0'})

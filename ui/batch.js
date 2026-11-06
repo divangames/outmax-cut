@@ -8,7 +8,7 @@
   const text=(el,value)=>{if(el.textContent!==String(value))el.textContent=String(value);};
   const current = () => batch.items.find(item=>item.id===batch.active);
   const ready = item => item.snapshot.sources.every(source=>source&&!source.missing) && item.snapshot.sources[0].id!==item.snapshot.sources[1].id;
-  const locked = () => state.running||state.uploading.some(Boolean)||batch.running||batch.importing||batch.collecting;
+  const locked = () => state.running||state.automationRunning||state.uploading.some(Boolean)||batch.running||batch.importing||batch.collecting;
   const error = message => {$('batchError').textContent=message;$('batchError').hidden=!message;if(!batch.mode)showError(message);};
   function remember(){
     if(batch.loading||batch.running||!batch.mode||!current())return;
@@ -427,6 +427,7 @@
     try{
       if(!locked()){
         const task=await api('/api/shell/import',{});
+        if((task.command||task.id)&&state.backgroundMode)await window.batchWorkspace?.activateEditor();
         if(task.command)await window.batchWorkspace?.shellCommand(task.command);
         if(task.id){
           switchMode(true);beginImport();batch.importId=task.id;pollImport();

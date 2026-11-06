@@ -32,6 +32,8 @@ from version import VERSION
 from updater import Updater
 from video_formats import DEFAULT_FORMATS, validate_catalog
 from workspace_store import WorkspaceStore
+from automation import AutoAssembler
+from batching import name_role, suggest_pair
 
 BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "OutmaxCut"
 BASE.mkdir(parents=True, exist_ok=True)
@@ -60,6 +62,10 @@ workspace = WorkspaceStore(BASE)
 shell_command = None
 last_workspace_store = None
 cleanup_done = False
+automation = None
+automation_init_lock = threading.Lock()
+background_exit_requested = False
+background_start = False
 active_requests = 0
 SETTINGS_FILE = BASE / "settings.json"
 
@@ -92,6 +98,8 @@ def preference_updates(data):
                 raise ValueError("Удаление пауз должно быть от 0 до 100%.")
         elif key == 'video_formats':
             value = validate_catalog(value)
+        elif key == 'last_preset_id':
+            if not isinstance(value,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{0,64}',value):raise ValueError('Некорректный пресет.')
         else:
             continue
         result[key] = value
@@ -166,7 +174,7 @@ def index():
 
 @app.get("/api/config")
 def config():
-    return jsonify(output=str(OUTPUT), preferences=preferences, version=VERSION, native=window is not None,
+    return jsonify(output=str(OUTPUT), preferences=preferences, version=VERSION, native=window is not None,background_start=background_start,
                    can_install_update=window is not None and getattr(sys, "frozen", False))
 
 
@@ -354,7 +362,7 @@ def validate_settings(data):
 
 
 def busy():
-    return any(j["status"] in ("running", "queued") and not j.get("preview") for j in jobs.values())
+    return (automation is not None and automation.active) or any(j["status"] in ("running", "queued") and not j.get("preview") for j in jobs.values())
 
 
 def cancel_previews():
@@ -560,7 +568,7 @@ def _execute_job(job):
                 job["output"].parent.rmdir()  # Only remove a newly created, empty destination.
             except OSError:
                 pass
-        if not job["preview"] and not job.get("batch_id") and job["status"] in ("done", "error"):
+        if not job["preview"] and not job.get("batch_id") and not job.get('automation_id') and job["status"] in ("done", "error"):
             title = "Превью готово" if job["preview"] else "Видео готово"
             notifications.notify(window, title if job["status"] == "done" else "Ошибка сборки",
                                  job.get("error") or ("Можно посмотреть результат в приложении." if job["preview"] else str(job["output"])),
@@ -748,11 +756,15 @@ def start_import(files, skipped=0, display_names=None):
 def enqueue_shell():
     global shell_updated, shell_command
     data=request.get_json(silent=True) or {};paths=data.get('paths',[]);action=data.get('action','add')
-    if action not in ('add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset','focus'):
+    if action not in ('add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset','focus','auto'):
         return jsonify(error='Неизвестная команда Проводника.'),400
     if not isinstance(paths, list) or not 0 <= len(paths) <= 1000 or any(
             not isinstance(p, str) or not Path(p).is_absolute() for p in paths):
         return jsonify(error="Некорректные пути."), 400
+    if action=='auto':
+        try:
+            key=get_automation().enqueue(paths);ensure_background_tray();return jsonify(ok=True,automation_id=key)
+        except (ValueError,OSError) as exc:return jsonify(error=str(exc)),400
     with lock:
         shell_paths.extend(p for p in paths if p not in shell_paths)
         shell_command=dict(action=action,preset=data.get('preset'))
@@ -933,7 +945,130 @@ def saved_presets():
 
 
 @app.get('/api/presets')
-def get_presets():return jsonify(presets=saved_presets())
+def get_presets():return jsonify(presets=saved_presets(),last_id=preferences.get('last_preset_id',''))
+
+
+def remember_preset(key):
+    with lock:
+        updated=preferences|{'last_preset_id':key};temporary=SETTINGS_FILE.with_suffix('.tmp');temporary.parent.mkdir(parents=True,exist_ok=True)
+        temporary.write_text(json.dumps(updated),encoding='utf-8');temporary.replace(SETTINGS_FILE);preferences.update(updated)
+
+
+@app.post('/api/automation/preset')
+def select_automation_preset():
+    key=(request.get_json(silent=True) or {}).get('id')
+    if not any(preset['id']==key for preset in saved_presets()):return jsonify(error='Пресет не найден.'),404
+    try:remember_preset(key);return jsonify(selected=key)
+    except OSError as exc:return jsonify(error=str(exc)),400
+
+
+def automation_settings():
+    presets=saved_presets();preset=next((preset for preset in presets if preset['id']==preferences.get('last_preset_id')),presets[-1] if presets else None)
+    saved=workspace.read();payload=saved['payload'] if saved else {}
+    selected=dict(preset['settings'] if preset else payload.get('lastSettings') or {})
+    catalog=[dict(item) for item in preferences.get('video_formats',DEFAULT_FORMATS)]
+    for item in selected.get('format_catalog',[]):
+        if not any(existing['id']==item['id'] for existing in catalog):
+            item=dict(item)
+            if any(existing['name'].casefold()==item['name'].casefold() for existing in catalog):item['name']=item['name'][:35]+' (пресет)'
+            catalog.append(item)
+    selected.update(format_catalog=catalog,trims=[None,None])
+    return validate_settings(selected),preset['name'] if preset else 'Последние настройки экспорта' if payload.get('lastSettings') else 'Стандартные настройки',Path(payload.get('output') or OUTPUT)
+
+
+def show_automation_report():
+    if window:
+        window.restore();window.show();window.evaluate_js('window.automationUI && window.automationUI.open(); null')
+
+
+def show_background_editor():
+    if window:window.evaluate_js('window.batchWorkspace && window.batchWorkspace.activateEditor(); null')
+
+
+def open_automation_folder():
+    manager=get_automation();latest=manager.snapshot()['runs']
+    path=Path(latest[0]['output']) if latest else OUTPUT
+    if path.is_dir():os.startfile(str(path))
+    else:show_automation_report()
+
+
+def ensure_background_tray(status='OUTMAX Cut · автосборка'):
+    notifications.editor_callback=show_background_editor
+    notifications.background(window,show_automation_report,open_automation_folder,lambda:get_automation().cancel(),status,exit_callback=exit_background)
+
+
+def exit_background():
+    global background_exit_requested
+    background_exit_requested=True
+    if window:window.destroy()
+
+
+def automation_finished(run):
+    ensure_background_tray('OUTMAX Cut · '+run['stage'])
+    review=run['status'] in ('error','done_with_review')
+    title='Автосборка завершена' if run['status'] not in ('error','cancelled') else 'Автосборка остановлена' if run['status']=='cancelled' else 'Ошибка автосборки'
+    notifications.notify(window,title,run['stage'],review,force=True,on_click=show_automation_report)
+
+
+def process_automatic_pair(item,settings,output,cancel,update):
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        for name in settings['formats']:
+            output_path(settings|{'article':item['article'],'output':str(output)}|({'_variant':name} if len(settings['formats'])>1 else {}),'auto-check')
+    except ValueError as exc:return dict(status='skipped' if 'уже существует' in str(exc) else 'review',message=str(exc))
+    def prepare(raw):
+        path=Path(raw);folder=WORK/uuid.uuid4().hex;folder.mkdir()
+        with import_slots:
+            if cancel.is_set():raise Cancelled()
+            return register_source(path,folder,path.name,str(Path(item['name'])/path.name),cancel)
+    with ThreadPoolExecutor(max_workers=2) as pool:entries=list(pool.map(prepare,item['paths']))
+    roles=[name_role(entry['name']) for entry in entries]
+    if roles[0]==roles[1] and roles[0] is not None:return dict(status='review',message='Оба видео названы одной ролью. Проверьте пару.')
+    if not any(roles) and abs(entries[0]['model_score']-entries[1]['model_score'])<.18:return dict(status='review',message='Роли определены неуверенно. Проверьте модель и руки.')
+    ids,note=suggest_pair(entries)
+    if None in ids:return dict(status='review',message=note)
+    if cancel.is_set():raise Cancelled()
+    try:
+        with lock:
+            job=create_job(settings|{'sources':ids,'article':item['article'],'output':str(output)},status='queued')
+            job['automation_id']=item.get('run_id','auto');job['cancel']=cancel
+    except ValueError as exc:
+        return dict(status='skipped' if 'уже существует' in str(exc) else 'review',message=str(exc))
+    update(job_id=job['id'],message='Ожидаем очередь экспорта')
+    execute_job(job)
+    if job['status']=='done':
+        return dict(status='done',message='Видео готово',outputs=[str(variant['output']) for variant in job['variants']],paths=[str(sources[key]['path']) for key in ids],findings=sum(len(v['report'].get('quality',{}).get('findings',[])) for v in job['variants']))
+    return dict(status='cancelled' if cancel.is_set() else 'review',message=job.get('error') or job['stage'])
+
+
+def get_automation():
+    global automation
+    def view(key):
+        with lock:return job_view(jobs[key]) if key in jobs else None
+    with automation_init_lock:
+        if automation is None:automation=AutoAssembler(BASE,automation_settings,process_automatic_pair,automation_finished,view)
+    return automation
+
+
+@app.get('/api/automation')
+def automation_status():return jsonify(get_automation().snapshot(summary=request.args.get('summary')=='1')|{'tray_resident':notifications.resident,'notification':notifications.last_notification})
+
+
+@app.post('/api/automation')
+def start_automation():
+    try:
+        key=get_automation().enqueue((request.get_json(silent=True) or {}).get('paths',[]));ensure_background_tray();return jsonify(id=key)
+    except (ValueError,OSError) as exc:return jsonify(error=str(exc)),400
+
+
+@app.post('/api/automation/cancel')
+def cancel_automation():get_automation().cancel();return jsonify(cancelled=True)
+
+
+@app.post('/api/automation/hide')
+def hide_automation():
+    if window:window.hide()
+    return jsonify(hidden=window is not None)
 
 
 @app.post('/api/presets')
@@ -952,6 +1087,8 @@ def update_presets():
                 presets=[p for p in presets if p['id']!=key]+[dict(id=key,name=name,settings=settings)]
                 if len(presets)>50:raise ValueError('Можно сохранить до 50 пресетов.')
             temp=BASE/'presets.tmp';temp.write_text(json.dumps(presets,ensure_ascii=False),encoding='utf-8');temp.replace(BASE/'presets.json')
+        if data.get('action')!='delete':remember_preset(key)
+        elif preferences.get('last_preset_id')==key:remember_preset(presets[-1]['id'] if presets else '')
         if getattr(sys,'frozen',False) and (Path(sys.executable).parent/'unins000.exe').exists():
             from explorer_menu import register_menu
             register_menu(Path(sys.executable),presets)
@@ -987,7 +1124,7 @@ def restore_session():
                 if field in entry:entry[field]=Path(entry[field])
             entry['path']=workspace.locate(key,entry['path'])
             if not entry['path'].is_file() or not entry['preview_path'].is_file():missing.append(str(entry['path']))
-            sources.setdefault(key,entry)
+            if key not in sources or not any(job['status'] in ('running','queued') and key in job.get('source_ids',[]) for job in list(jobs.values())):sources[key]=entry
         except (KeyError,TypeError):continue
     restored_jobs={}
     for key,entry in data.get('jobs',{}).items():
@@ -1106,6 +1243,7 @@ def cleanup():
     active = [*jobs.values(), *imports.values(), *batches.values()]
     for job in active:
         job["cancel"].set()
+    if automation is not None:automation.shutdown()
     for job in active:
         worker = job.get("thread")
         if worker and worker.is_alive():
@@ -1136,16 +1274,19 @@ atexit.register(cleanup)
 
 
 def main():
-    global window, shell_updated, shell_command
+    global window, shell_updated, shell_command, background_start
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", action="store_true")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--open", nargs="+", default=[])
-    parser.add_argument('--shell-action',default=None,choices=['add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset'])
+    parser.add_argument('--shell-action',default=None,choices=['add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset','auto'])
     parser.add_argument('--preset')
     parser.add_argument('--register-shell',action='store_true')
     args = parser.parse_args()
+    automatic=args.shell_action=='auto'
+    background_start=automatic
+    if automatic and not args.open:parser.error('Для автосборки укажите файл или папку через --open.')
     if args.register_shell:
         from explorer_menu import register_menu
         register_menu(Path(sys.executable),saved_presets());return
@@ -1154,14 +1295,15 @@ def main():
     owner = claim_instance(BASE, args.open, command) if command else claim_instance(BASE,args.open)
     if owner is False:
         return
-    shell_paths.extend(str(Path(p).resolve()) for p in args.open)
-    shell_command=command
+    if not automatic:shell_paths.extend(str(Path(p).resolve()) for p in args.open)
+    shell_command=None if automatic else command
     shell_updated = time.monotonic()
     server = create_server(app, host="127.0.0.1", port=args.port, threads=6)
     url = f"http://127.0.0.1:{server.effective_port}"
     if owner:
         publish_instance(BASE, url, TOKEN)
     if args.no_open:
+        if automatic:get_automation().enqueue([str(Path(path).resolve()) for path in args.open])
         print(url, flush=True)
         server.run()
         return
@@ -1173,17 +1315,28 @@ def main():
         try:
             import webview
             window = webview.create_window("OUTMAX Cut", url, width=1340, height=900,
-                                           min_size=(940, 700), background_color="#f4f4ef")
+                                           min_size=(940, 700), background_color="#f4f4ef",hidden=automatic,focus=not automatic)
+            if automatic:
+                started=threading.Event()
+                def start_automatic():
+                    if started.is_set():return
+                    started.set();ensure_background_tray()
+                    try:get_automation().enqueue([str(Path(path).resolve()) for path in args.open])
+                    except Exception as exc:
+                        logging.exception('Automatic startup failed');notifications.notify(window,'Не удалось начать автосборку',str(exc),True,force=True,on_click=show_automation_report)
+                window.events.loaded+=start_automatic
             close_state={'pending':False,'allowed':False}
             def closing():
                 if close_state['allowed']:return True
                 if close_state['pending']:return False
+                if notifications.resident and automation is not None and automation.active and not background_exit_requested:
+                    window.native.Hide();return False
                 if busy() or any(i["status"] == "running" for i in imports.values()):
                     if not window.create_confirmation_dialog('Идёт обработка','Остановить обработку и закрыть программу? Очередь будет сохранена.'):return False
                 close_state['pending']=True
                 def persist_and_close():
                     try:
-                        payload=window.evaluate_js('window.batchController ? JSON.stringify(window.batchController.persistPayload()) : null')
+                        payload=window.evaluate_js('window.batchController && !state.backgroundMode ? JSON.stringify(window.batchController.persistPayload()) : null')
                         if payload:workspace.save(json.loads(payload),sources,jobs,WORK)
                         close_state['allowed']=True;window.destroy()
                     except Exception:

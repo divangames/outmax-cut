@@ -19,7 +19,7 @@ class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);self.work=self.root/'work';self.work.mkdir();self.store=WorkspaceStore(self.root/'profile')
         self.client=server.app.test_client();self.headers={'X-Outmax-Token':server.TOKEN}
-        self.patches=[patch.object(server,'BASE',self.root/'profile'),patch.object(server,'workspace',self.store),patch.object(server,'WORK',self.work),patch.dict(server.sources,{},clear=True),patch.dict(server.jobs,{},clear=True)]
+        self.patches=[patch.object(server,'BASE',self.root/'profile'),patch.object(server,'SETTINGS_FILE',self.root/'profile/settings.json'),patch.dict(server.preferences,dict(server.preferences),clear=True),patch.object(server,'workspace',self.store),patch.object(server,'WORK',self.work),patch.dict(server.sources,{},clear=True),patch.dict(server.jobs,{},clear=True)]
         for item in self.patches:item.start()
         (self.root/'profile').mkdir()
     def tearDown(self):

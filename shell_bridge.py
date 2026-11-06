@@ -6,8 +6,8 @@ import time
 import urllib.request
 
 _lease = None
-LOCK_FILE = 'shell-v2.lock'
-STATE_FILE = 'shell-v2.json'
+LOCK_FILE = 'shell-v3.lock'
+STATE_FILE = 'shell-v3.json'
 
 
 def claim_instance(base, paths, command=None):
