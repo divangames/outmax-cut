@@ -1,6 +1,6 @@
 ﻿#define AppName "OUTMAX Cut"
 #ifndef AppVersion
-#define AppVersion "1.9.0"
+#define AppVersion "1.9.1"
 #endif
 [Setup]
 AppId={{59722AFB-A431-44DF-B79F-8DD2D4256CD2}
@@ -41,6 +41,8 @@ Filename: "{app}\OUTMAX-Cut.exe"; Parameters: "--register-shell"; Flags: runhidd
 Filename: "{app}\OUTMAX-Cut.exe"; Description: "Запустить OUTMAX Cut"; Flags: nowait postinstall skipifsilent
 
 [Registry]
+Root: HKCU; Subkey: "Software\Classes\Folder\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Folder\shell\OutmaxCutAuto"; ValueType: string; ValueName: "MUIVerb"; ValueData: "Собрать видео автоматически"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
