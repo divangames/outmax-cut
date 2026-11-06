@@ -4,6 +4,20 @@
   canvas.className='live-preview-canvas';canvas.hidden=true;canvas.setAttribute('aria-hidden','true');
   stage.insertBefore(canvas,player);
   const context=canvas.getContext('2d'),buffers=[document.createElement('canvas'),document.createElement('canvas')];
+  const sourceDrawers=[0,1].map(slot=>{
+    const video=$('sourceVideo'+slot),surface=document.createElement('canvas');
+    surface.className='source-framing-canvas';surface.hidden=true;surface.setAttribute('aria-hidden','true');video.before(surface);
+    let scheduled=false;
+    const draw=()=>{
+      if(video.readyState<2||!state.sources[slot]){surface.hidden=true;video.classList.remove('live-frame');return;}
+      const [w,h]=formatSpecs[$('outputFormat').value],scale=160/Math.max(w,h);
+      cropped(video,slot,surface,Math.max(2,Math.floor(w*scale/2)*2),Math.max(2,Math.floor(h*scale/2)*2));
+      surface.hidden=false;video.classList.add('live-frame');
+      if(!video.paused&&!scheduled){scheduled=true;video.requestVideoFrameCallback(()=>{scheduled=false;draw();});}
+    };
+    for(const name of ['loadeddata','seeked','play','emptied'])video.addEventListener(name,draw);
+    return draw;
+  });
   const decoders=new Map();
   let report=null,sourceKey='',active=false,revision=0,editVersion=0,drawing=false,dirty=false,animation=0,frozenTime=null;
   const key=()=>state.sources.map(source=>source?.id||'').join('|');
@@ -27,10 +41,10 @@
     const model=report.model_frames,hands=report.hands_frames;
     for(const [boundary,length,kind] of [[model,Math.min(15,hands),$('transition').value],[model+hands,18,'lens']]){
       if(kind==='cut'||index<boundary||index>=boundary+length)continue;
-      const previous=sample(boundary-1),step=Math.max(0,previous.time-sample(boundary-2).time);
+      const previous=sample(boundary-1),step=boundary>=2&&sample(boundary-2).slot===previous.slot?Math.max(0,previous.time-sample(boundary-2).time):0;
       const limit=report.content_bounds[previous.slot][1]-1/30;
       const outgoing={slot:previous.slot,time:Math.min(limit,previous.time+(index-boundary+1)*step),moving:previous.time+(index-boundary+1)*step<limit};
-      const fraction=(index-boundary)/Math.max(1,length-1);
+      const fraction=length===1?1:(index-boundary)/(length-1);
       return {layers:[outgoing,incoming],fraction:fraction*fraction*(3-2*fraction),blur:kind==='lens'?22*Math.sin(Math.PI*fraction)**2:0};
     }
     return {layers:[incoming],fraction:0,blur:0};
@@ -68,18 +82,18 @@
   }
   function cropped(video,slot,buffer,width,height){
     if(buffer.width!==width||buffer.height!==height){buffer.width=width;buffer.height=height;}
-    const ctx=buffer.getContext('2d'),vw=video.videoWidth,vh=video.videoHeight,ratio=width/height;
-    const cw=Math.min(vw,vh*ratio),ch=Math.min(vh,vw/ratio);
-    ctx.drawImage(video,(vw-cw)*$('cropX'+slot).value/100,(vh-ch)*$('crop'+slot).value/100,cw,ch,0,0,width,height);
+    const ctx=buffer.getContext('2d');
+    ctx.drawImage(video,...framingBox(slot,video.videoWidth,video.videoHeight,width,height),0,0,width,height);
   }
   async function draw(){
     if(drawing||!active)return;
     drawing=true;
     do{
-      dirty=false;const version=revision,current=plan();
-      const videos=await Promise.all(current.layers.map(frame));
+      dirty=false;const version=revision,rawSlot=player.dataset.sourceSlot;
+      const current=rawSlot===undefined?plan():{layers:[{slot:+rawSlot}],fraction:0,blur:0};
+      const videos=rawSlot===undefined?await Promise.all(current.layers.map(frame)):[player.readyState>=2?player:null];
       if(!active||version!==revision||videos.some(video=>!video))continue;
-      const [w,h]=formatSpecs[$('outputFormat').value],scale=480/Math.max(w,h),width=Math.floor(w*scale/2)*2,height=Math.floor(h*scale/2)*2;
+      const [w,h]=formatSpecs[$('outputFormat').value],scale=Math.min(1,480/Math.max(w,h)),width=Math.max(2,Math.floor(w*scale/2)*2),height=Math.max(2,Math.floor(h*scale/2)*2);
       if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
       videos.forEach((video,i)=>cropped(video,current.layers[i].slot,buffers[i],width,height));
       context.globalAlpha=1;context.filter='none';context.drawImage(buffers[0],0,0);
@@ -94,13 +108,15 @@
   }
   function request(){if(!active)return;dirty=true;draw();}
   function edit(){
-    if(player.dataset.sourceSlot!==undefined)return;
+    sourceDrawers.forEach(draw=>draw());
     const currentKey=key();
     const selected=$('previewTab').getAttribute('aria-selected')==='true'?state.preview:$('resultTab').getAttribute('aria-selected')==='true'?resultVariant():null;
     if(selected?.report?.segments){report=selected.report;sourceKey=currentKey;}
-    if(!report||sourceKey!==currentKey)return;
+    if(player.dataset.sourceSlot===undefined&&(!report||sourceKey!==currentKey))return;
+    if(report)report=window.timelineEditor?.plan(report)||report;
     active=true;editVersion++;revision++;stage.style.setProperty('--video-ratio',formatSpecs[$('outputFormat').value][0]/formatSpecs[$('outputFormat').value][1]);request();
   }
   window.livePreview={edit,stop,get active(){return active;},get version(){return editVersion;},suspend(time){frozenTime=time;revision++;for(const video of decoders.values())video.pause();},finish(version){frozenTime=null;if(version===editVersion)stop();else request();}};
-  for(const name of ['seeked','timeupdate','play','pause'])player.addEventListener(name,()=>{if(active){revision++;request();}});
+  $('outputFormat').addEventListener('change',()=>sourceDrawers.forEach(draw=>draw()));
+  for(const name of ['loadeddata','seeked','timeupdate','play','pause'])player.addEventListener(name,()=>{if(active){revision++;request();}else if(player.dataset.sourceSlot!==undefined&&player.readyState>=2)edit();});
 })();

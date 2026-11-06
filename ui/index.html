@@ -16,6 +16,8 @@
     <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></symbol>
   </svg>
   <header class="topbar">
     <a class="brand" href="/" aria-label="OUTMAX Cut — главная"><span class="brand-mark" aria-hidden="true"></span>OUTMAX <span class="brand-sub">Cut</span></a>
@@ -115,16 +117,15 @@
       <section class="preview-panel" aria-label="Предпросмотр и экспорт">
         <div class="preview-heading">
           <div class="tabs" role="tablist" aria-label="Выбор видео">
-            <button role="tab" aria-selected="true" aria-controls="viewer" id="referenceTab">Эталон</button>
             <button role="tab" aria-selected="false" aria-controls="viewer" id="resultTab" disabled>Результат</button>
             <button role="tab" aria-selected="false" aria-controls="viewer" id="previewTab" disabled>Превью</button>
           </div>
-          <span class="viewer-label" id="viewerLabel">Оригинальный ролик</span>
+          <span class="viewer-label" id="viewerLabel">Пример монтажа</span>
         </div>
         <p id="autoPreviewStatus" class="auto-preview-status" role="status">Превью появится автоматически после добавления двух видео.</p>
         <label class="result-format" id="resultFormatControl" hidden>Просмотр результата<select id="resultFormat" aria-label="Разрешение готового результата"></select></label>
         <div class="stage" id="viewer" role="tabpanel" aria-label="Видео">
-          <video id="mainVideo" src="/reference" controls playsinline preload="auto" aria-label="Видео эталона"></video>
+          <video id="mainVideo" src="/reference" controls playsinline preload="auto" aria-label="Пример монтажа"></video>
           <div class="stage-empty" id="renderOverlay" hidden>
             <div class="render-mark" aria-hidden="true"><span></span><span></span><span></span></div>
             <h3 id="stageTitle">Собираем ваш ролик</h3><p id="stageText">Исходники остаются на компьютере.</p>
@@ -143,7 +144,7 @@
             <option value="500">500 кбит/с</option>
             <option value="750">750 кбит/с</option>
             <option value="1000">1000 кбит/с</option>
-            <option value="1065">1065 кбит/с · близко к эталону</option>
+            <option value="1065">1065 кбит/с</option>
             <option value="1500">1500 кбит/с</option>
             <option value="2000">2000 кбит/с</option>
             <option value="2500" selected>2500 кбит/с · стандартный</option>
@@ -184,7 +185,7 @@
     <progress id="updateProgress" max="100" value="0" aria-label="Загрузка обновления" hidden></progress>
     <p id="updateError" class="message error" role="alert" hidden></p>
     <div class="update-actions"><button class="secondary-button" id="checkUpdateButton">Проверить снова</button><button class="primary-button" id="downloadUpdateButton" hidden>Скачать обновление</button><button class="primary-button" id="installUpdateButton" hidden>Установить и закрыть приложение</button><a href="https://github.com/divangames/outmax-cut/releases/latest" target="_blank" rel="noopener noreferrer">Релизы на GitHub</a></div>
-    <p class="field-help">Перед установкой завершите монтаж. Текущая очередь не сохраняется при закрытии. Готовые видео остаются на диске.</p>
+    <p class="field-help">Перед установкой завершите монтаж. Очередь сохраняется автоматически. Готовые видео остаются на диске.</p>
   </section>
   <dialog id="helpDialog" aria-labelledby="helpTitle">
     <h2 id="helpTitle">Из двух исходников — в готовый ролик</h2>
@@ -196,9 +197,15 @@
   </dialog>
   <script src="/ui/motion.js" defer></script>
   <script src="/ui/app.js" defer></script>
+  <script src="/ui/formats.js" defer></script>
   <script src="/ui/batch.js" defer></script>
   <script src="/ui/layout.js" defer></script>
   <script src="/ui/live-preview.js" defer></script>
+  <script src="/ui/timeline.js" defer></script>
+  <script src="/ui/editor-extras.js" defer></script>
+  <script src="/ui/workspace.js" defer></script>
+  <script src="/ui/context-menu.js" defer></script>
+  <script src="/ui/whats-new.js" defer></script>
   <script src="/ui/preview.js" defer></script>
   <script src="/ui/updates.js" defer></script>
 </body>

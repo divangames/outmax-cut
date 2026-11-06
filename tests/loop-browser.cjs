@@ -41,7 +41,7 @@ async function wrap(page){
   await page.waitForFunction(()=>state.result&&!state.running,null,{timeout:240000});
   await page.waitForFunction(()=>document.getElementById('mainVideo').readyState>=3);
   await wrap(page);
-  await page.locator('#referenceTab').click();assert.equal(await page.locator('#mainVideo').evaluate(v=>v.loop),false);
+  assert.equal(await page.locator('#referenceTab').count(),0);
   await page.locator('#resultTab').click();assert.equal(await page.locator('#mainVideo').evaluate(v=>v.loop),true);
   assert.deepEqual(errors,[]);
   fs.writeFileSync(path.join(root,'analysis/qa17/browser.json'),JSON.stringify({errors,output,previewWrap:true,resultWrap:true},null,2));

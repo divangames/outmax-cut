@@ -103,6 +103,8 @@ components:
 
 # Design System: OUTMAX Cut
 
+Version 1.8 adds task menus, queue filters and preset dialogs within the existing compact blue workbench. The user explicitly requested a red NEW emblem: its background is #b42318 with white uppercase 10px semibold text, treated as a badge rather than body copy. The top navigation wraps on narrow screens. Context menus use a white surface, a neutral offset shadow, 12px actions, separators and keyboard navigation; disabled commands are muted. Release-history dialogs pair readable descriptions with real locally bundled screenshots. These additions preserve the existing editor and queue layout.
+
 ## Overview
 
 The implemented interface is a light, neutral photo and video workbench: white working panels on a warm pale canvas, compact Russian labels, and restrained olive actions. Footage is the principal visual material. This is a Windows desktop editor with a locally served interface, not a marketing page.

@@ -30,6 +30,8 @@ from notifications import TrayNotifications
 from batching import VIDEO_EXTENSIONS, model_score, group_sources, safe_folder, is_generated_video
 from version import VERSION
 from updater import Updater
+from video_formats import DEFAULT_FORMATS, validate_catalog
+from workspace_store import WorkspaceStore
 
 BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "OutmaxCut"
 BASE.mkdir(parents=True, exist_ok=True)
@@ -54,12 +56,17 @@ shell_paths = []
 shell_updated = 0
 updater = Updater(BASE / "updates")
 installing_update = False
+workspace = WorkspaceStore(BASE)
+shell_command = None
+last_workspace_store = None
+cleanup_done = False
 active_requests = 0
 SETTINGS_FILE = BASE / "settings.json"
 
 
 def load_preferences():
-    defaults = dict(save_processing_log=False, mode="smart", bitrate_kbps=2500, sensitivity=40)
+    defaults = dict(save_processing_log=False, mode="smart", bitrate_kbps=2500, sensitivity=40,
+                    video_formats=DEFAULT_FORMATS)
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
         return defaults | preference_updates(data)
@@ -83,6 +90,8 @@ def preference_updates(data):
         elif key == "sensitivity":
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 100:
                 raise ValueError("Удаление пауз должно быть от 0 до 100%.")
+        elif key == 'video_formats':
+            value = validate_catalog(value)
         else:
             continue
         result[key] = value
@@ -204,7 +213,8 @@ def install_update():
 
 def public_source(entry):
     return {k: entry[k] for k in ("id", "name", "info", "relative", "model_score")} | {
-        "preview": f"/media/{entry['id']}", "poster": f"/poster/{entry['id']}"}
+        "preview": f"/media/{entry['id']}", "poster": f"/poster/{entry['id']}",
+        "location":str(entry.get('path','')),"missing":bool(entry.get('path') and (not entry['path'].is_file() or not entry.get('preview_path',entry['path']).is_file()))}
 
 
 def register_source(path, folder, name, relative=None, cancel=None, progress=None):
@@ -231,7 +241,7 @@ def register_source(path, folder, name, relative=None, cancel=None, progress=Non
         encoded.tofile(str(folder / "poster.jpg"))
     key = folder.name
     entry = dict(id=key, name=name, relative=relative or name, info=info, path=path,
-                 preview_path=preview, model_score=model_score(preview))
+                 preview_path=preview, poster_path=folder/'poster.jpg', model_score=model_score(preview))
     with lock:
         sources[key] = entry
     if progress:
@@ -306,7 +316,7 @@ def poster(key):
     entry = sources.get(key)
     if not entry:
         abort(404)
-    return send_file(WORK / key / "poster.jpg", conditional=True)
+    return send_file(sources[key].get('poster_path',WORK / key / 'poster.jpg'), conditional=True)
 
 
 def validate_settings(data):
@@ -323,12 +333,22 @@ def validate_settings(data):
         raise ValueError("Положение кадра должно быть от 0 до 100%.")
     if not math.isfinite(sensitivity) or not 0 <= sensitivity <= 100:
         raise ValueError("Чувствительность должна быть от 0 до 100.")
-    output_dimensions(data)
+    catalog = validate_catalog(data.get('format_catalog', preferences.get('video_formats', DEFAULT_FORMATS)))
+    output_dimensions(data | {'format_catalog': catalog})
     formats = data.get("formats", [data.get("format", "standard")])
-    if not isinstance(formats, list) or not 1 <= len(formats) <= 3 or any(
-            not isinstance(name, str) or name not in ("standard", "marketplace", "vertical") for name in formats) or len(set(formats)) != len(formats):
-        raise ValueError("Выберите от одного до трёх разных разрешений.")
+    if not isinstance(formats, list) or not 1 <= len(formats) <= len(catalog) or any(
+            not isinstance(name, str) or name not in {item['id'] for item in catalog} for name in formats) or len(set(formats)) != len(formats):
+        raise ValueError("Выберите хотя бы одно разрешение без повторов.")
+    zooms = data.get('zooms', [1, 1])
+    if not isinstance(zooms, list) or len(zooms) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n) or not 1 <= n <= 3 for n in zooms):
+        raise ValueError('Масштаб должен быть от 100 до 300%.')
+    trims = data.get('trims', [None, None])
+    if not isinstance(trims, list) or len(trims) != 2 or any(trim is not None and (
+            not isinstance(trim, list) or len(trim) != 2 or any(isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n) for n in trim) or
+            not 0 <= trim[0] < trim[1] <= 600 or trim[1]-trim[0] < 1/24) for trim in trims):
+        raise ValueError('Укажите начало и конец каждого исходника; оставьте хотя бы один кадр.')
     return dict(mode=mode, transition=transition, crops=crops, crops_x=crops_x, sensitivity=sensitivity,
+                zooms=zooms, trims=trims, format_catalog=catalog,
                 format=data.get("format", formats[0]), formats=formats,
                 bitrate_kbps=video_bitrate(data if "bitrate_kbps" in data else {"bitrate_kbps":preferences["bitrate_kbps"]}))
 
@@ -377,13 +397,19 @@ def output_path(data, key):
         raise ValueError("Недопустимая папка экспорта.")
     suffix = ""
     if data.get("_variant"):
-        width, height = output_dimensions({"format":data["_variant"]})
+        width, height = output_dimensions(data | {"format":data["_variant"]})
         suffix = f"_{width}x{height}"
+        if data['_variant'] not in ('standard', 'marketplace', 'vertical'):
+            suffix += '_' + data['_variant']
     filename = dest / f"{article}{suffix}.mp4"
     used = {str(variant["output"]).casefold() for j in jobs.values()
             if j["status"] in ("running", "queued") for variant in j.get("variants", [{"output":j["output"]}])}
     if filename.exists() or str(filename).casefold() in used:
-        raise ValueError(f"Файл уже существует или поставлен в очередь: {filename}. Переместите его перед повторным экспортом.")
+        if data.get('_repeat'):
+            index=2
+            while filename.exists() or str(filename).casefold() in used:
+                filename=dest/f'{article}{suffix}_v{index}.mp4';index+=1
+        else:raise ValueError(f"Файл уже существует или поставлен в очередь: {filename}. Переместите его перед повторным экспортом.")
     return filename
 
 
@@ -402,7 +428,7 @@ def check_archive(job):
             raise ValueError(f"Исходник не найден: {source['path']}")
         if target.exists() and source["path"].resolve() != target.resolve():
             raise ValueError(f"Исходник уже существует: {target}")
-    if job["save_processing_log"] and (job["output"].parent / "монтаж.txt").exists():
+    if job["save_processing_log"] and (job["output"].parent / job.get('log_name','монтаж.txt')).exists():
         raise ValueError("Лог монтаж.txt уже существует. Переместите его перед экспортом.")
     return targets
 
@@ -432,10 +458,11 @@ def archive_sources(job):
     for source, target in targets:
         original = source["path"]
         if original.resolve() != target.resolve():
-            original.unlink()
+            if not original.resolve().is_relative_to(workspace.media.resolve()):original.unlink()
             for entry in sources.values():
                 if entry["path"] == original:
                     entry["path"] = target
+                    workspace.record_location(entry)
                 if entry.get("preview_path") == original:
                     entry["preview_path"] = target
 
@@ -448,13 +475,17 @@ def create_job(data, status="running", preview=False):
         raise ValueError("Добавьте видео «Модель» и «Руки».")
     if ids[0] == ids[1] or sources[ids[0]]["path"].resolve() == sources[ids[1]]["path"].resolve():
         raise ValueError("Модель и руки должны быть разными файлами.")
+    for s,trim in enumerate(settings['trims']):
+        if trim is not None and trim[1] > sources[ids[s]]['info']['duration'] + .001:
+            raise ValueError('Монтажная граница выходит за длительность исходника.')
     key = uuid.uuid4().hex
     variants = ([dict(format=settings["format"], output=WORK / key / "preview.mp4")] if preview else
-                [dict(format=name, output=output_path(data | ({"_variant":name} if len(settings["formats"]) > 1 else {}), key)) for name in settings["formats"]])
+                [dict(format=name, output=output_path(data | settings | ({"_variant":name} if len(settings["formats"]) > 1 else {}), key)) for name in settings["formats"]])
     job = dict(id=key, status=status, progress=0, stage="В очереди" if status == "queued" else "Начинаем",
                cancel=threading.Event(), output=variants[0]["output"], variants=variants,
                article=None if preview else article_number(data),
                preview=preview,
+               log_name=(f'{variants[0]["output"].stem}-монтаж.txt' if data.get('_repeat') else 'монтаж.txt'),
                settings=settings, source_ids=list(ids), item_id=data.get("item_id"),
                save_processing_log=preferences["save_processing_log"])
     jobs[key] = job
@@ -477,6 +508,7 @@ def _execute_job(job):
     created_outputs = []
     rendered_all = False
     try:
+        job['started_at']=time.monotonic()
         if job["cancel"].is_set():
             raise Cancelled()
         with lock:
@@ -504,7 +536,7 @@ def _execute_job(job):
         if not job["preview"]:
             archive_sources(job)
         if job["save_processing_log"] and not job["preview"]:
-            with (job["output"].parent / "монтаж.txt").open("x", encoding="utf-8") as log:
+            with (job["output"].parent / job.get('log_name','монтаж.txt')).open("x", encoding="utf-8") as log:
                 json.dump(report, log, ensure_ascii=False, indent=2)
         with lock:
             job.update(status="done", report=variants[0]["report"], progress=100, stage="Видео готово")
@@ -539,6 +571,9 @@ def job_view(job):
     result = {k: v for k, v in job.items() if k not in ("cancel", "output", "thread", "variants")}
     result["output"] = str(job["output"])
     result["variants"] = [v | {"output":str(v["output"])} for v in job["variants"]]
+    elapsed=time.monotonic()-job.get('started_at',time.monotonic())
+    progress=job.get('progress',0)
+    result['eta_seconds']=round(elapsed/progress*(100-progress)) if job['status']=='running' and progress>3 and elapsed>2 else None
     return result
 
 
@@ -711,13 +746,16 @@ def start_import(files, skipped=0, display_names=None):
 
 @app.post("/api/shell/enqueue")
 def enqueue_shell():
-    global shell_updated
-    paths = (request.get_json(silent=True) or {}).get("paths", [])
-    if not isinstance(paths, list) or not 1 <= len(paths) <= 1000 or any(
+    global shell_updated, shell_command
+    data=request.get_json(silent=True) or {};paths=data.get('paths',[]);action=data.get('action','add')
+    if action not in ('add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset','focus'):
+        return jsonify(error='Неизвестная команда Проводника.'),400
+    if not isinstance(paths, list) or not 0 <= len(paths) <= 1000 or any(
             not isinstance(p, str) or not Path(p).is_absolute() for p in paths):
         return jsonify(error="Некорректные пути."), 400
     with lock:
         shell_paths.extend(p for p in paths if p not in shell_paths)
+        shell_command=dict(action=action,preset=data.get('preset'))
         shell_updated = time.monotonic()
     if window:
         try:
@@ -730,13 +768,17 @@ def enqueue_shell():
 
 @app.post("/api/shell/import")
 def import_shell():
+    global shell_command
     with lock:
-        if not shell_paths or time.monotonic() - shell_updated < 1.5:
+        if (not shell_paths and not shell_command) or time.monotonic() - shell_updated < 1.5:
             return jsonify(pending=False)
         if busy() or any(i["status"] == "running" for i in imports.values()):
             return jsonify(pending=False)
         paths = list(shell_paths)
         shell_paths.clear()
+        command=shell_command or dict(action='add');shell_command=None
+    if command['action'] in ('settings','results','resume','focus'):
+        return jsonify(command=command|{'paths':paths})
     files, seen, skipped = [], set(), 0
     for raw in paths:
         selected = Path(raw)
@@ -757,7 +799,10 @@ def import_shell():
                 return jsonify(error="За один импорт можно добавить до 1000 видео."), 400
     if not files:
         return jsonify(error="В выбранных файлах и папках нет исходных видео."), 400
-    return start_import(files, skipped)
+    response=start_import(files, skipped)
+    imported=(response.get_json() if hasattr(response,'get_json') else response)['id']
+    if imported in imports:imports[imported]['command']=command
+    return response
 
 
 @app.get("/api/imports/<key>")
@@ -880,7 +925,184 @@ def save_as(key):
     return jsonify(cancelled=True)
 
 
+def saved_presets():
+    try:
+        value=json.loads((BASE/'presets.json').read_text(encoding='utf-8'))
+        return value if isinstance(value,list) else []
+    except (OSError,ValueError):return []
+
+
+@app.get('/api/presets')
+def get_presets():return jsonify(presets=saved_presets())
+
+
+@app.post('/api/presets')
+def update_presets():
+    data=request.get_json(silent=True) or {}
+    try:
+        with workspace.guard:
+            presets=saved_presets();key=data.get('id') or uuid.uuid4().hex
+            if data.get('action')=='delete':presets=[p for p in presets if p['id']!=key]
+            else:
+                name=str(data.get('name','')).strip()
+                if not 1<=len(name)<=48 or any(ord(c)<32 for c in name):raise ValueError('Название пресета: от 1 до 48 символов.')
+                if any(p['name'].casefold()==name.casefold() and p['id']!=key for p in presets):raise ValueError('Такое название пресета уже есть.')
+                if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',key):raise ValueError('Некорректный пресет.')
+                settings=validate_settings(data.get('settings',{}));settings['trims']=[None,None]
+                presets=[p for p in presets if p['id']!=key]+[dict(id=key,name=name,settings=settings)]
+                if len(presets)>50:raise ValueError('Можно сохранить до 50 пресетов.')
+            temp=BASE/'presets.tmp';temp.write_text(json.dumps(presets,ensure_ascii=False),encoding='utf-8');temp.replace(BASE/'presets.json')
+        if getattr(sys,'frozen',False) and (Path(sys.executable).parent/'unins000.exe').exists():
+            from explorer_menu import register_menu
+            register_menu(Path(sys.executable),presets)
+        return jsonify(presets=presets)
+    except (ValueError,OSError) as exc:return jsonify(error=str(exc)),400
+
+
+@app.post('/api/session')
+def save_session():
+    global last_workspace_store
+    if cleanup_done:return jsonify(error='Приложение закрывается.'),409
+    try:
+        workspace.save(request.get_json(silent=True) or {},sources,jobs,WORK)
+        last_workspace_store=workspace
+        return jsonify(saved=True)
+    except (ValueError,TypeError,OSError,KeyError) as exc:return jsonify(error=str(exc)),400
+
+
+@app.get('/api/session')
+def restore_session():
+    archive=request.args.get('archive')
+    if archive:
+        if not re.fullmatch(r'[a-f0-9]{32}',archive):return jsonify(error='Некорректный пакет.'),400
+        try:data=json.loads((BASE/'queues'/f'{archive}.json').read_text(encoding='utf-8'))
+        except (OSError,ValueError):return jsonify(error='Сохранённый пакет не найден.'),404
+    else:data=workspace.read()
+    if not data:return jsonify(session=None)
+    missing=[]
+    for key,entry in data.get('sources',{}).items():
+        try:
+            entry=dict(entry)
+            for field in ('path','preview_path','poster_path'):
+                if field in entry:entry[field]=Path(entry[field])
+            entry['path']=workspace.locate(key,entry['path'])
+            if not entry['path'].is_file() or not entry['preview_path'].is_file():missing.append(str(entry['path']))
+            sources.setdefault(key,entry)
+        except (KeyError,TypeError):continue
+    restored_jobs={}
+    for key,entry in data.get('jobs',{}).items():
+        try:
+            entry=dict(entry);entry['output']=Path(entry['output'])
+            entry['variants']=[v|{'output':Path(v['output'])} for v in entry['variants']]
+            if not all(v['output'].is_file() for v in entry['variants']):continue
+            entry['cancel']=threading.Event();jobs.setdefault(key,entry);restored_jobs[key]=job_view(jobs[key])
+        except (KeyError,TypeError):continue
+    return jsonify(session=data['payload'],sources={key:public_source(sources[key]) for key in data['sources'] if key in sources},jobs=restored_jobs,missing=missing)
+
+
+@app.get('/api/session/archives')
+def queue_archives():
+    result=[]
+    for path in (BASE/'queues').glob('*.json'):
+        try:
+            data=json.loads(path.read_text(encoding='utf-8'));result.append(dict(id=path.stem,name=data.get('title','Пакет'),count=len(data['payload']['items']),saved_at=path.stat().st_mtime))
+        except (OSError,ValueError,KeyError):continue
+    return jsonify(archives=sorted(result,key=lambda item:item['saved_at'],reverse=True))
+
+
+@app.post('/api/session/archive')
+def archive_queue():
+    data=workspace.read()
+    if not data:return jsonify(saved=False)
+    name=str((request.get_json(silent=True) or {}).get('name') or datetime.now().strftime('Пакет %d.%m.%Y %H:%M'))[:80]
+    data['title']=name;key=uuid.uuid4().hex;folder=BASE/'queues';folder.mkdir(exist_ok=True)
+    (folder/f'{key}.json').write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8')
+    return jsonify(saved=True,id=key)
+
+
+@app.post('/api/source-location')
+def source_location():
+    data=request.get_json(silent=True) or {};entry=sources.get(data.get('id'))
+    if not entry:return jsonify(error='Исходник не найден.'),404
+    path=entry['path']
+    if data.get('open'):
+        if not path.parent.is_dir():return jsonify(error='Папка исходника не найдена.'),400
+        os.startfile(str(path.parent))
+    return jsonify(path=str(path),folder=str(path.parent),exists=path.is_file())
+
+
+@app.post('/api/job-log')
+def job_log():
+    job=jobs.get((request.get_json(silent=True) or {}).get('id'))
+    if not job:return jsonify(error='Отчёт не найден.'),404
+    return jsonify(reports=[v.get('report',{}) for v in job['variants']],error=job.get('error'))
+
+
+@app.post('/api/frame')
+def save_frame():
+    import base64
+    data=(request.get_json(silent=True) or {}).get('data','')
+    if not isinstance(data,str) or not data.startswith('data:image/png;base64,') or len(data)>24*1024**2:return jsonify(error='Некорректный PNG-кадр.'),400
+    try:
+        raw=base64.b64decode(data.split(',',1)[1],validate=True)
+        if not raw.startswith(b'\x89PNG\r\n\x1a\n'):raise ValueError('Некорректный PNG.')
+        if window:
+            import webview
+            selected=window.create_file_dialog(webview.FileDialog.SAVE,save_filename='кадр.png',file_types=('PNG (*.png)',))
+            if not selected:return jsonify(cancelled=True)
+            path=Path(selected[0] if isinstance(selected,(list,tuple)) else selected).with_suffix('.png');path.write_bytes(raw);return jsonify(saved=str(path))
+        key=uuid.uuid4().hex;folder=WORK/'frames';folder.mkdir(exist_ok=True);(folder/f'{key}.png').write_bytes(raw)
+        return jsonify(download='/api/frames/'+key)
+    except (ValueError,OSError) as exc:return jsonify(error=str(exc)),400
+
+
+@app.get('/api/frames/<key>')
+def frame_download(key):
+    if not re.fullmatch(r'[a-f0-9]{32}',key):abort(404)
+    return send_file(WORK/'frames'/f'{key}.png',as_attachment=True,download_name='кадр.png')
+
+
+@app.post('/api/batch/preflight')
+def preflight():
+    data=request.get_json(silent=True) or {};items=data.get('items',[])
+    if not isinstance(items,list) or len(items)>500:return jsonify(error='Некорректная очередь.'),400
+    result=[];used_paths=set()
+    for item in items:
+        try:
+            settings=validate_settings(item);ids=item.get('sources',[])
+            if len(ids)!=2 or ids[0]==ids[1] or any(key not in sources or not sources[key]['path'].is_file() for key in ids):raise ValueError('Нужны два доступных разных исходника.')
+            paths={sources[key]['path'].resolve() for key in ids}
+            if len(paths)!=2 or paths&used_paths:raise ValueError('Один исходник используется в нескольких товарах. Оставьте одну пару.')
+            used_paths.update(paths)
+            for index,trim in enumerate(settings['trims']):
+                if trim and trim[1]>sources[ids[index]]['info']['duration']+.001:raise ValueError('Граница выходит за исходник.')
+            outputs=[output_path(item|settings|{'output':data.get('output'),'folder':item.get('name'),'_repeat':False}|({'_variant':fmt} if len(settings['formats'])>1 else {}),'check') for fmt in settings['formats']]
+            result.append(dict(id=item.get('item_id'),status='ready',outputs=list(map(str,outputs))))
+        except (ValueError,TypeError,KeyError) as exc:
+            message=str(exc);result.append(dict(id=item.get('item_id'),status='existing' if 'уже существует' in message else 'error',error=message))
+    return jsonify(items=result)
+
+
+@app.post('/api/sources/check')
+def check_sources():
+    ids=(request.get_json(silent=True) or {}).get('sources',[])
+    if not isinstance(ids,list) or not 1<=len(ids)<=1000 or any(key not in sources for key in ids):return jsonify(error='Выберите исходники.'),400
+    key=uuid.uuid4().hex;task=dict(id=key,status='running',processed=0,total=len(ids),errors=[],groups=[],skipped=0,progress=0,stage='Проверяем исходники',current='',cancel=threading.Event(),eta_seconds=None);imports[key]=task
+    def worker():
+        for source_id in ids:
+            if task['cancel'].is_set():break
+            entry=sources[source_id];task['current']=entry['name']
+            try:probe(entry['path'])
+            except Exception as exc:task['errors'].append(dict(file=entry['name'],error=str(exc)))
+            task['processed']+=1;task['progress']=round(task['processed']/task['total']*100)
+        task['status']='cancelled' if task['cancel'].is_set() else 'done'
+    task['thread']=threading.Thread(target=worker,daemon=True);task['thread'].start();return jsonify(id=key)
+
+
 def cleanup():
+    global cleanup_done
+    if cleanup_done:return
+    cleanup_done=True
     active = [*jobs.values(), *imports.values(), *batches.values()]
     for job in active:
         job["cancel"].set()
@@ -891,6 +1113,21 @@ def cleanup():
                 worker.join(timeout=8)
             except RuntimeError:
                 pass
+    if last_workspace_store is workspace:
+        try:
+            saved=workspace.read()
+            if saved:
+                payload=saved['payload']
+                for item in payload.get('items',[]):
+                    ids=[source['id'] if source else None for source in item['snapshot'].get('sources',[])]
+                    matching=[job for job in jobs.values() if not job.get('preview') and job.get('item_id')==item['id'] and job.get('source_ids')==ids and
+                              (item.get('status') in ('queued','running') or payload.get('batch_id') and job.get('batch_id')==payload['batch_id'])]
+                    if matching:
+                        job=matching[-1];item['status']=job['status'];item['error']=job.get('error')
+                        if job['status']=='done':item['snapshot'].update(result={'id':job['id']},stale=False)
+                payload['batch_id']=None
+                workspace.save(payload,sources,jobs,WORK)
+        except Exception:logging.exception('Could not finalize saved workspace')
     # Session-specific directory: never touches source files or exported videos.
     shutil.rmtree(WORK, ignore_errors=True)
 
@@ -899,18 +1136,26 @@ atexit.register(cleanup)
 
 
 def main():
-    global window, shell_updated
+    global window, shell_updated, shell_command
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", action="store_true")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--open", nargs="+", default=[])
+    parser.add_argument('--shell-action',default=None,choices=['add','new','review','quick','new-only','check','model','hands','resume','results','settings','preset'])
+    parser.add_argument('--preset')
+    parser.add_argument('--register-shell',action='store_true')
     args = parser.parse_args()
+    if args.register_shell:
+        from explorer_menu import register_menu
+        register_menu(Path(sys.executable),saved_presets());return
     from shell_bridge import claim_instance, publish_instance
-    owner = claim_instance(BASE, args.open)
+    command=dict(action=args.shell_action,preset=args.preset) if args.shell_action else None
+    owner = claim_instance(BASE, args.open, command) if command else claim_instance(BASE,args.open)
     if owner is False:
         return
     shell_paths.extend(str(Path(p).resolve()) for p in args.open)
+    shell_command=command
     shell_updated = time.monotonic()
     server = create_server(app, host="127.0.0.1", port=args.port, threads=6)
     url = f"http://127.0.0.1:{server.effective_port}"
@@ -929,10 +1174,24 @@ def main():
             import webview
             window = webview.create_window("OUTMAX Cut", url, width=1340, height=900,
                                            min_size=(940, 700), background_color="#f4f4ef")
+            close_state={'pending':False,'allowed':False}
             def closing():
+                if close_state['allowed']:return True
+                if close_state['pending']:return False
                 if busy() or any(i["status"] == "running" for i in imports.values()):
-                    return window.create_confirmation_dialog(
-                        "Идёт экспорт", "Отменить обработку и закрыть программу?")
+                    if not window.create_confirmation_dialog('Идёт обработка','Остановить обработку и закрыть программу? Очередь будет сохранена.'):return False
+                close_state['pending']=True
+                def persist_and_close():
+                    try:
+                        payload=window.evaluate_js('window.batchController ? JSON.stringify(window.batchController.persistPayload()) : null')
+                        if payload:workspace.save(json.loads(payload),sources,jobs,WORK)
+                        close_state['allowed']=True;window.destroy()
+                    except Exception:
+                        logging.exception('Could not save workspace on close');close_state['pending']=False
+                        try:window.evaluate_js("showError('Не удалось сохранить очередь перед закрытием. Проверьте свободное место и повторите закрытие.')")
+                        except Exception:pass
+                threading.Thread(target=persist_and_close,daemon=True).start()
+                return False
             window.events.closing += closing
             webview.start(gui="edgechromium", icon=str(RESOURCES / "assets/icon.ico"))
         except Exception:

@@ -46,8 +46,7 @@ const targetUrl = process.env.OUTMAX_URL || 'http://127.0.0.1:8765';
     await page.waitForTimeout(900);
     await page.screenshot({path:path.join(root,'analysis/ui-result.png'),fullPage:true});
     console.log('Result:',await page.locator('#outputPath').textContent());
-    await page.getByRole('tab',{name:'Эталон',exact:true}).click();
-    assert.equal(await page.getByRole('tab',{name:'Эталон',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await page.locator('#referenceTab').count(),0);
     await page.getByLabel('Режим сборки').selectOption('smart');
     await page.locator('#smartOptions').waitFor();
     await page.locator('#resultActions').waitFor({state:'hidden'});
@@ -59,6 +58,6 @@ const targetUrl = process.env.OUTMAX_URL || 'http://127.0.0.1:8765';
     await page.locator('#progressArea').waitFor({state:'hidden',timeout:20000});
     assert(await page.getByRole('button',{name:'Собрать заново',exact:true}).isEnabled());
     assert.deepEqual(errors,[]);
-    console.log('PASS: upload, reference, export, playback, responsive layout, help, mode, cancellation; no JS errors');
+    console.log('PASS: upload, export, playback, responsive layout, help, mode, cancellation; no JS errors');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

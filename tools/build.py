@@ -33,6 +33,15 @@ def copy_notices(dest):
 
 
 def main():
+    import json
+    history=json.loads((ROOT/'ui/whats-new.json').read_text(encoding='utf-8'))
+    if not history or history[0]['version']!=VERSION:
+        raise SystemExit('Add the current version to ui/whats-new.json before building.')
+    for release in history:
+        if not release.get('changes') or not release.get('screenshots'):raise SystemExit('Each release needs descriptions and real screenshots.')
+        for shot in release['screenshots']:
+            resource=ROOT/shot['src'].lstrip('/')
+            if not resource.resolve().is_relative_to((ROOT/'ui/whats-new').resolve()) or not resource.is_file():raise SystemExit(f'Missing release screenshot: {resource}')
     if os.name != "nt":
         raise SystemExit("Run this build on Windows.")
     iscc = shutil.which("ISCC")

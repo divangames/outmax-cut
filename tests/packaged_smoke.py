@@ -38,7 +38,7 @@ def main():
             raise RuntimeError("Packaged app did not start")
         assert data["version"] == VERSION, data
         assert "Профиль" in data["output"], data
-        for resource in ("/", "/reference", "/ui/app.js", "/ui/live-preview.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
+        for resource in ("/", "/reference", "/ui/app.js", "/ui/formats.js", "/ui/timeline.js", "/ui/editor-extras.js", "/ui/workspace.js", "/ui/context-menu.js", "/ui/whats-new.js", "/ui/whats-new.json", "/ui/live-preview.js", "/ui/preview.js", "/ui/updates.js", "/api/updates"):
             with urllib.request.urlopen("http://127.0.0.1:8771" + resource) as response:
                 assert response.status == 200
         ffprobe = target / "_internal" / "bin" / "ffprobe.exe"
@@ -50,8 +50,19 @@ def main():
             html=response.read().decode('utf-8')
         token=re.search(r'name="outmax-token" content="([^"]+)"',html).group(1)
         assert 'id="previewButton"' not in html
+        assert 'id="referenceTab"' not in html
+        assert len(data['preferences']['video_formats'])==3
+        with urllib.request.urlopen('http://127.0.0.1:8771/ui/whats-new.json') as response:history=json.load(response)
+        assert history[0]['version']==VERSION
+        for release in history:
+            for shot in release['screenshots']:
+                with urllib.request.urlopen('http://127.0.0.1:8771'+shot['src']) as response:assert response.headers['Content-Type'].startswith('image/')
+        session=dict(items=[],mode=False,active=None,single=dict(sources=[None,None],settings=dict(zooms=[1.3,1.2])),output=str(profile))
+        req=urllib.request.Request('http://127.0.0.1:8771/api/session',json.dumps(session).encode(),{'Content-Type':'application/json','X-Outmax-Token':token})
+        with urllib.request.urlopen(req) as response:assert response.status==200
         assert data['preferences']['mode']=='smart'
-        selected={'mode':'template','bitrate_kbps':750,'sensitivity':73}
+        selected={'mode':'template','bitrate_kbps':750,'sensitivity':73,
+                  'video_formats':data['preferences']['video_formats']+[dict(id='custom_smoke',name='Для сайта',width=640,height=480)]}
         req=urllib.request.Request('http://127.0.0.1:8771/api/settings',json.dumps(selected).encode(),
                                    {'Content-Type':'application/json','X-Outmax-Token':token})
         with urllib.request.urlopen(req) as response:assert response.status==200
@@ -65,6 +76,7 @@ def main():
             except OSError:time.sleep(.5)
         else:raise RuntimeError('Packaged restart failed')
         assert all(restored[key]==value for key,value in selected.items()),restored
+        with urllib.request.urlopen('http://127.0.0.1:8771/api/session') as response:assert json.load(response)['session']['single']['settings']['zooms']==[1.3,1.2]
         print("PASS: packaged app, Cyrillic paths, isolated PATH, auto-preview assets, bundled FFprobe, defaults persist after process restart.")
     finally:
         process.terminate()

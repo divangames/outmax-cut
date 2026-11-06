@@ -31,6 +31,8 @@ class BatchTests(unittest.TestCase):
             entry["path"].write_bytes(("original-" + key).encode())
         self.preferences = patch.dict(server.preferences, save_processing_log=False)
         self.preferences.start()
+        self.workspace=patch.object(server,'workspace',server.WorkspaceStore(self.root/'profile'))
+        self.workspace.start()
 
     def tearDown(self):
         for batch in server.batches.values():
@@ -41,6 +43,7 @@ class BatchTests(unittest.TestCase):
             task["thread"].join(5)
         server.imports.clear()
         self.preferences.stop()
+        self.workspace.stop()
         self.temp.cleanup()
 
     def item(self, **kwargs):
@@ -345,7 +348,7 @@ class BatchTests(unittest.TestCase):
                 for body in ({'mode':'template'},{'bitrate_kbps':750},{'sensitivity':73},{'save_processing_log':True}):
                     self.assertEqual(self.client.post('/api/settings',json=body,headers=self.headers).status_code,200)
                 restored=server.load_preferences()
-                self.assertEqual(restored,{'mode':'template','bitrate_kbps':750,'sensitivity':73,'save_processing_log':True})
+                self.assertEqual(restored,{'mode':'template','bitrate_kbps':750,'sensitivity':73,'save_processing_log':True,'video_formats':server.DEFAULT_FORMATS})
                 for body in ({'mode':'wrong'},{'bitrate_kbps':True},{'sensitivity':101},{'save_processing_log':1}):
                     self.assertEqual(self.client.post('/api/settings',json=body,headers=self.headers).status_code,400)
                 self.assertEqual(server.load_preferences(),restored)

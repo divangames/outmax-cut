@@ -13,6 +13,8 @@ import uuid
 
 import cv2
 import numpy as np
+from video_formats import DEFAULT_FORMATS, catalog_dimensions
+from quality import FrameQuality
 
 FPS = 30
 PLAYBACK_SPEED = 1.25
@@ -27,12 +29,10 @@ FORMATS = {"standard": (1080, 1080), "marketplace": (900, 1200), "vertical": (10
 
 def output_dimensions(settings):
     name = settings.get("format", "standard")
-    if not isinstance(name, str) or name not in FORMATS:
-        raise ValueError("Неизвестный формат видео.")
-    width, height = FORMATS[name]
+    width, height = catalog_dimensions(settings.get('format_catalog', DEFAULT_FORMATS), name)
     if settings.get("preview"):
-        scale = 480 / max(width, height)
-        width, height = (int(value * scale) // 2 * 2 for value in (width, height))
+        scale = min(1,480 / max(width, height))
+        width, height = (max(2, int(value * scale) // 2 * 2) for value in (width, height))
     return width, height
 
 
@@ -85,14 +85,14 @@ def run(args, cancel=None, timeout=600):
     return out
 
 
-def probe(path):
+def probe(path, min_duration=1, max_duration=600):
     raw = json.loads(run([binary("ffprobe"), "-v", "error", "-show_format",
                           "-show_streams", "-of", "json", str(path)], timeout=30))
     video = next((s for s in raw["streams"] if s["codec_type"] == "video"), None)
     if not video:
         raise ValueError("В файле нет видеодорожки.")
     duration = float(video.get("duration") or raw["format"].get("duration", 0))
-    if not math.isfinite(duration) or not 1 <= duration <= 600:
+    if not math.isfinite(duration) or not min_duration <= duration <= max_duration:
         raise ValueError("Нужно видео длительностью от 1 секунды до 10 минут.")
     w, h = video["width"], video["height"]
     rotation = next((s.get("rotation", 0) for s in video.get("side_data_list", [])
@@ -113,10 +113,10 @@ def color_filter(info):
     return ""
 
 
-def normalize(source, info, dest, crop, cancel, size=SIZE, width=None, height=None, crop_x=.5, preview=False):
+def normalize(source, info, dest, crop, cancel, size=SIZE, width=None, height=None, crop_x=.5, preview=False, zoom=1):
     width, height = width or size, height or size
     ratio = width / height
-    filt = (f"fps={FPS},crop=min(iw\\,ih*{ratio:.9f}):min(ih\\,iw/{ratio:.9f}):(iw-ow)*{crop_x:.6f}:(ih-oh)*{crop:.6f}," +
+    filt = (f"fps={FPS},crop=min(iw\\,ih*{ratio:.9f})/{zoom:.9f}:min(ih\\,iw/{ratio:.9f})/{zoom:.9f}:(iw-ow)*{crop_x:.6f}:(ih-oh)*{crop:.6f}," +
             color_filter(info) + f"scale={width}:{height}:flags={'bilinear' if preview else 'lanczos'},setsar=1,format=yuv420p")
     run([binary("ffmpeg"), "-v", "error", "-y", "-i", str(source), "-an",
          "-vf", filt, "-c:v", "libx264", "-preset", "ultrafast" if preview else "fast", "-crf", "24" if preview else "15",
@@ -377,11 +377,14 @@ def render(sources, infos, settings, work, output, progress, cancel):
             progress(4 + s * 12, f"Подготовка видео: {'модель' if s == 0 else 'руки'}")
             path = work / f"normalized-{s}.mp4"
             normalize(sources[s], infos[s], path, settings["crops"][s], cancel,
-                      width=width, height=height, crop_x=settings.get("crops_x", [.5, .5])[s], preview=preview)
+                      width=width, height=height, crop_x=settings.get("crops_x", [.5, .5])[s], preview=preview,
+                      zoom=settings.get('zooms', [1, 1])[s])
             paths.append(path)
         progress(29, "Анализ движения и точек монтажа")
         analyses = [scan_content(path, cancel) for path in settings.get("_analysis_paths", sources)]
-        bounds = [scene_bounds(analysis,s) for s,analysis in enumerate(analyses)]
+        auto_bounds = [scene_bounds(analysis,s) for s,analysis in enumerate(analyses)]
+        bounds = [tuple(trim) if trim is not None else auto_bounds[s]
+                  for s,trim in enumerate(settings.get('trims', [None, None]))]
         segments = smart_segments(paths,settings["sensitivity"],cancel,analyses,bounds,
                                   remove_pauses=settings["mode"]=="smart")
         readers = [FrameReader(p) for p in paths]
@@ -413,6 +416,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
                 "-g", "30", "-bf", "0",
                 str(intermediate)], stdin=subprocess.PIPE, stderr=error, creationflags=NO_WINDOW)
             first_frame = readers[timeline[0][0]].get(timeline[0][1])
+            quality = FrameQuality()
             for index, (s, t) in enumerate(timeline):
                 if cancel.is_set():
                     raise Cancelled()
@@ -421,15 +425,16 @@ def render(sources, infos, settings, work, output, progress, cancel):
                     boundary, j, n, lead, kind = transitions[index]
                     old_s, old_t = timeline[boundary-1]
                     new_s, new_t = timeline[boundary]
-                    old_step = max(0, old_t - timeline[boundary-2][1])
+                    old_step = max(0, old_t - timeline[boundary-2][1]) if boundary >= 2 and timeline[boundary-2][0] == old_s else 0
                     new_step = max(0, timeline[boundary+1][1] - new_t)
                     old_sample = t if index < boundary else min(bounds[old_s][1]-1/FPS, old_t+(index-boundary+1)*old_step)
                     new_sample = t if index >= boundary else max(bounds[new_s][0], new_t+(index-boundary)*new_step)
                     a = readers[old_s].get(old_sample)
                     b = readers[new_s].get(new_sample)
-                    frame = transition(a, b, j/(n-1), kind)
+                    frame = b if n == 1 else transition(a, b, j/(n-1), kind)
                 if index == frame_count - 1:
                     frame = first_frame.copy()
+                quality.add(frame,index,eligible=index not in transitions and index<frame_count-18)
                 proc.stdin.write(frame.tobytes())
                 if index % 10 == 0:
                     progress(32 + 43 * (index+1)/frame_count, "Монтаж и переходы")
@@ -447,7 +452,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
         bitrate = video_bitrate(settings)
         encoding = ["-c:v", "libx264", "-b:v", str(bitrate * 1000),
                     "-maxrate", str(bitrate * 1000), "-bufsize", str(bitrate * 2000),
-                    "-preset", "medium", "-profile:v", "high", "-level", "4.0",
+                    "-preset", "medium", "-profile:v", "high",
                     "-pix_fmt", "yuv420p", "-threads", "4",
                     "-passlogfile", passlog]
         if preview:
@@ -466,7 +471,7 @@ def render(sources, infos, settings, work, output, progress, cancel):
                         "-colorspace", "bt709", str(temp_output)], cancel)
         if cancel.is_set():
             raise Cancelled()
-        result = probe(temp_output)
+        result = probe(temp_output, min_duration=1/FPS, max_duration=1200)
         if (result["width"], result["height"]) != (width, height):
             raise RuntimeError("Проверка формата результата не пройдена.")
         if os.name == "nt":
@@ -475,7 +480,9 @@ def render(sources, infos, settings, work, output, progress, cancel):
             os.link(temp_output, output)
             temp_output.unlink()
         report = dict(generator="OUTMAX Cut", segments=segments, settings={k:v for k,v in settings.items() if not k.startswith("_")}, result=result,
-                      loop=True, content_bounds=bounds, black_opening_frame=False,
+                      loop=True, quality=quality.report(), content_bounds=bounds, auto_bounds=auto_bounds,
+                      activity_ranges=[active_intervals(path,settings['sensitivity'],cancel,analyses[s]) for s,path in enumerate(paths)],
+                      black_opening_frame=False,
                       frames=frame_count, fps=FPS, speed=PLAYBACK_SPEED,model_frames=model_frames,hands_frames=hands_frames,
                       transition_note="Independent Lens Blur approximation / optical flow")
         progress(100, "Видео готово")

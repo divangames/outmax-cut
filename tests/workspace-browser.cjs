@@ -1,0 +1,55 @@
+const {chromium}=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const root=process.cwd(),out=path.join(root,'analysis/qa180'),url=process.env.OUTMAX_URL||'http://127.0.0.1:8780',restore=process.argv.includes('--restore');
+const ready=page=>page.waitForFunction(()=>state.preview&&!autoPreview.loading&&!livePreview.active&&$('mainVideo').readyState>=2,null,{timeout:90000});
+const slide=(page,id,value)=>page.locator('#'+id).evaluate((e,v)=>{e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));},String(value));
+const seek=(page,time)=>page.locator('#mainVideo').evaluate((v,t)=>new Promise(resolve=>{v.pause();if(Math.abs(v.currentTime-t)<.001&&!v.seeking)return resolve();v.addEventListener('seeked',resolve,{once:true});v.currentTime=t;}),time);
+const menu=(page,label)=>page.getByRole('menuitem',{name:label,exact:true}).click();
+(async()=>{const browser=await chromium.launch({headless:false}),page=await browser.newPage({viewport:{width:1440,height:1040}}),errors=[];page.on('pageerror',error=>{errors.push(error.message);console.log('JS ERROR',error.message)});
+try{
+ await page.goto(url);await page.evaluate(()=>workspaceReady);console.log('READY',restore?'restore':'setup');
+ if(!restore){
+  await page.evaluate(async()=>{batchController.clear();await batchWorkspace.flush();for(const p of batchWorkspace.presets)await api('/api/presets',{id:p.id,action:'delete'});});await page.reload();await page.evaluate(()=>workspaceReady);
+  await page.locator('#settingsButton').click();await page.locator('.format-row[data-id=standard] .format-width').fill('160');await page.locator('.format-row[data-id=standard] .format-height').click();await page.locator('#saveFormats').click();await page.getByText('Размеры сохранены и доступны в экспорте.').waitFor();await page.locator('#closeSettings').click();
+  await page.locator('#batchMode').click();await page.locator('#folderInput').setInputFiles(path.join(out,'import'));
+  await page.waitForFunction(()=>batchController.items.length===2&&!batchController.locked,null,{timeout:60000});await ready(page);console.log('IMPORTED');
+  await slide(page,'zoom0',135);await slide(page,'zoom1',145);await ready(page);
+  await page.locator('.trim-settings summary').click();await page.locator('#trimEnd0').fill('3.3');await page.locator('#trimStart0').click();await ready(page);
+  await page.locator('#trimEnd1').fill('4');await page.locator('#trimStart1').click();await ready(page);
+  await page.locator('#bitrate').selectOption('500');await seek(page,2.4);
+  await page.locator('#savePreset').click();await page.locator('#workspaceDialog input[name=name]').fill('Для сайта');await page.getByRole('button',{name:'Сохранить',exact:true}).click();await page.waitForFunction(()=>batchWorkspace.presets.length===1);
+  const first=await page.evaluate(()=>batchController.current.id);const second=await page.evaluate(()=>batchController.items.find(item=>item.id!==batchController.current.id).id);
+  await page.locator(`.batch-row[data-id="${first}"]`).click({button:'right'});await menu(page,'Скопировать настройки');
+  await page.locator(`.batch-row[data-id="${second}"]`).click({button:'right'});await menu(page,'Вставить настройки…');assert(!(await page.locator('#workspaceDialog input[name=trims]').isChecked()));await page.locator('#workspaceDialog').getByRole('button',{name:'Применить',exact:true}).click();
+  assert.deepEqual(await page.evaluate(id=>batchController.items.find(i=>i.id===id).snapshot.settings.zooms,second),[1.35,1.45]);assert.deepEqual(await page.evaluate(id=>batchController.items.find(i=>i.id===id).snapshot.settings.trims,second),[null,null]);console.log('PRESET AND PASTE');
+  await page.locator('#queueSearch').fill('47433');assert.equal(await page.locator('.batch-row:visible').count(),1);await page.locator('#resetQueueFilter').click();
+  await page.locator('#queueFilter').selectOption('incomplete');assert.equal(await page.locator('.batch-row:visible').count(),0);await page.locator('#resetQueueFilter').click();
+  await page.locator(`.batch-row[data-id="${second}"]`).click({button:'right'});await menu(page,'Переместить');await menu(page,'В начало');assert.equal(await page.locator('.batch-row').first().getAttribute('data-id'),second);
+  await page.locator(`.batch-row[data-id="${first}"]`).click({button:'right'});await menu(page,'Проверить исходники');await page.getByRole('heading',{name:'Проверка исходников',exact:true}).waitFor();assert.match(await page.locator('.workspace-report').textContent(),/Исходники доступны/);await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+  await page.locator(`.batch-row[data-id="${first}"] .batch-item-open`).click();await ready(page);await seek(page,2.4);
+  await page.locator('#batchOutputPath').fill(path.join(out,'exports'));
+  await page.evaluate(()=>batchWorkspace.flush());await page.waitForFunction(()=>$('queueSaveStatus').textContent==='Очередь сохранена');
+  const data=await page.evaluate(()=>batchController.persistPayload());fs.writeFileSync(path.join(out,'saved-before-restart.json'),JSON.stringify(data,null,2));assert.deepEqual(errors,[]);console.log('PASS setup: upload, presets, scoped paste, search/filter, reorder, source verification and durable save');
+ }else{
+  await page.waitForFunction(()=>batchController.items.length===2);await ready(page);console.log('RESTORED');
+  assert.equal(await page.locator('#zoom0').inputValue(),'135');assert.equal(await page.locator('#zoom1').inputValue(),'145');
+  assert(Math.abs(await page.locator('#mainVideo').evaluate(v=>v.currentTime)-2.4)<.034);assert(await page.locator('#mainVideo').evaluate(v=>v.paused));
+  assert(await page.evaluate(()=>batchController.items.every(i=>i.snapshot.sources.every(s=>s.location.includes('queue-media')))));
+  const first=await page.evaluate(()=>batchController.current.id);
+  await page.locator(`.batch-row[data-id="${first}"]`).click({button:'right'});await page.screenshot({path:path.join(root,'ui/whats-new/1.8.0-queue.png'),animations:'disabled'});await page.keyboard.press('Escape');
+  await page.locator('#applySelectedButton').click();await page.locator('#workspaceDialog').screenshot({path:path.join(root,'ui/whats-new/1.8.0-presets.png'),animations:'disabled'});await page.getByRole('button',{name:'Отмена',exact:true}).click();
+  await page.locator('.batch-sidebar').evaluate(e=>e.scrollTop=0);await page.locator('#viewer').click({button:'right'});await page.screenshot({path:path.join(root,'ui/whats-new/1.8.0-preview.png'),animations:'disabled'});
+  const time=await page.locator('#mainVideo').evaluate(v=>v.currentTime);await menu(page,'Следующий кадр');assert(Math.abs(await page.locator('#mainVideo').evaluate(v=>v.currentTime)-time-1/30)<.002);
+  await page.locator('#viewer').click({button:'right'});await menu(page,'Сравнить с исходником');assert.equal(await page.locator('.source-comparison video').count(),1);await page.getByRole('button',{name:'Закрыть',exact:true}).click();
+  await page.locator('#viewer').click({button:'right'});const download=page.waitForEvent('download');await menu(page,'Сохранить текущий кадр PNG');assert.match((await download).suggestedFilename(),/\.png$/);console.log('PREVIEW COMMANDS');
+  await page.getByRole('button',{name:'Что нового',exact:true}).click();await page.locator('#whatsNewDialog').waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('#releaseHistory details:first-child img')].every(i=>i.complete&&i.naturalWidth>0));
+  assert.equal(await page.locator('.release-entry').count(),3);await page.locator('#whatsNewDialog').screenshot({path:path.join(out,'whats-new.png'),animations:'disabled'});await page.locator('#closeWhatsNew').click();
+  await page.locator('#batchRenderButton').click();await page.waitForFunction(()=>$('batchSummary').textContent==='Готово. Сохранено 2 роликов.',null,{timeout:180000});
+  assert(await page.evaluate(()=>batchController.items.every(i=>i.snapshot.result?.report.quality?.checked_frames>0)));console.log('EXPORTED');
+  await page.locator(`.batch-row[data-id="${first}"]`).click({button:'right'});await menu(page,'Экспортировать этот товар');await page.waitForFunction(()=>!batchController.locked&&batchController.current.snapshot.result?.output.includes('_v2'),null,{timeout:90000});
+  assert(await page.evaluate(()=>batchController.current.snapshot.result.output.endsWith('_v2.mp4')));
+  await page.evaluate(()=>batchWorkspace.flush());const archive=await page.evaluate(()=>batchWorkspace.archive());assert(archive.saved);console.log('REPEAT AND ARCHIVE');
+  await page.locator('#managePresets').click();await page.locator('#workspaceDialog input[name=name]').fill('Для каталога');await page.locator('#workspaceDialog').getByRole('button',{name:'Применить',exact:true}).click();await page.waitForFunction(()=>batchWorkspace.presets[0].name==='Для каталога');
+  await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.getByRole('button',{name:'Что нового',exact:true}).click();await page.locator('#whatsNewDialog').screenshot({path:path.join(out,'phone-whats-new.png'),animations:'disabled'});assert(await page.locator('#whatsNewDialog').evaluate(e=>e.scrollWidth<=e.clientWidth));
+  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'browser-result.json'),JSON.stringify({restored:true,exports:true,repeat:true,quality:true,menus:true,whatsNew:true,errors},null,2));console.log('PASS restore after process restart, durable media, cursor/settings, native menu actions, PNG, release screenshots, real batch/repeat exports, quality reports and mobile layout');
+ }
+}catch(error){await page.screenshot({path:path.join(out,'failure.png'),animations:'disabled'});console.log('STATE',await page.evaluate(()=>({status:$('queueSaveStatus')?.textContent,error:$('batchError')?.textContent,editor:$('errorMessage')?.textContent,items:batchController.items.length,source:state.sources.map(s=>s?.location),restore:state.restorePlayback,preview:state.preview?.id})));throw error;}finally{await browser.close();}})().catch(error=>{console.error(error);process.exitCode=1;});

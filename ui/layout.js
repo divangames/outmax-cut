@@ -21,9 +21,11 @@
   sourceTabs.innerHTML='<button id="previewModel" aria-pressed="true">Модель</button><button id="previewHands" aria-pressed="false">Руки</button>';
   $('viewer').after(sourceTabs);
   const cropDock=document.createElement('div');cropDock.className='crop-dock';cropDock.hidden=true;sourceTabs.after(cropDock);
+  cropDock.before(document.querySelector('.timeline'));
   for(let i=0;i<2;i++){$('cropControl'+i).dataset.role=i?'Руки':'Модель';$('cropControl'+i).append($('resetCrop'+i));}
   window.previewSource=(slot,userInitiated=false)=>{
     const source=state.sources[slot];if(!source)return;
+    if(userInitiated)state.restorePlayback=null;
     window.livePreview?.stop(true);++playerRevision;
     $('mainVideo').dataset.userSourceView=String(userInitiated);
     $('mainVideo').loop=true;
@@ -31,7 +33,7 @@
     $('mainVideo').pause();$('mainVideo').dataset.sourceSlot=String(slot);$('mainVideo').style.objectFit='cover';$('mainVideo').style.objectPosition=cropPosition(slot);$('mainVideo').src=source.preview;$('mainVideo').onloadeddata=null;$('mainVideo').onloadedmetadata=()=>{if($('mainVideo').currentTime===0)$('mainVideo').currentTime=Math.min(3,source.info.duration/2);};$('mainVideo').setAttribute('aria-label',slot?'Исходник рук':'Исходник модели');updateFormat();
     $('viewerLabel').textContent=source.name;$('videoDuration').textContent=source.info.duration.toFixed(2)+' с';$('videoSize').textContent=mb(source.info.size)+' МБ';
     $('resultFormatControl').hidden=true;
-    $('referenceTab').setAttribute('aria-selected','false');$('resultTab').setAttribute('aria-selected','false');$('previewTab').setAttribute('aria-selected','false');
+    $('resultTab').setAttribute('aria-selected','false');$('previewTab').setAttribute('aria-selected','false');
     $('previewModel').setAttribute('aria-pressed',String(!slot));$('previewHands').setAttribute('aria-pressed',String(!!slot));motion.reveal($('viewer'));
   };
   $('previewModel').onclick=()=>previewSource(0,true);$('previewHands').onclick=()=>previewSource(1,true);

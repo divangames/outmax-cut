@@ -7,7 +7,7 @@
   let lastEditLock, paintFrame;
   const text=(el,value)=>{if(el.textContent!==String(value))el.textContent=String(value);};
   const current = () => batch.items.find(item=>item.id===batch.active);
-  const ready = item => item.snapshot.sources.every(Boolean) && item.snapshot.sources[0].id!==item.snapshot.sources[1].id;
+  const ready = item => item.snapshot.sources.every(source=>source&&!source.missing) && item.snapshot.sources[0].id!==item.snapshot.sources[1].id;
   const locked = () => state.running||state.uploading.some(Boolean)||batch.running||batch.importing||batch.collecting;
   const error = message => {$('batchError').textContent=message;$('batchError').hidden=!message;if(!batch.mode)showError(message);};
   function remember(){
@@ -31,6 +31,9 @@
     $('folderDrop').setAttribute('aria-disabled',String(editLocked));
     if(lastEditLock!==editLocked){for(const row of rows.values())row.querySelectorAll('[data-edit]').forEach(el=>el.disabled=editLocked);lastEditLock=editLocked;}
     const count=batch.items.filter(item=>item.selected&&ready(item)).length;
+    if($('applySelectedButton'))$('applySelectedButton').disabled=editLocked||!batch.items.some(item=>item.selected);
+    if($('savePreset'))$('savePreset').disabled=editLocked;
+    if($('applyPreset'))$('applyPreset').disabled=editLocked||!$('presetSelect').value;
     $('batchRenderButton').disabled=editLocked||!count||!$('batchOutputPath').value.trim();
     $('batchRenderButton').textContent=`Собрать выбранные${count?' · '+count:''}`;
   }
@@ -89,11 +92,12 @@
     for(const item of batch.items){
       const row=rows.get(item.id);
       if(!row)continue;
-      const statusKey=[item.status,item.progress,item.error,ready(item),item.selected].join('|');
+      const findings=(item.snapshot.result?.variants||[]).flatMap(v=>v.report?.quality?.findings||[]);
+      const statusKey=[item.status,item.progress,item.error,ready(item),item.selected,findings.length].join('|');
       if(row.dataset.statusKey===statusKey)continue;
       row.dataset.statusKey=statusKey;
       row.querySelector('.batch-item-check').checked=item.selected;
-      text(row.querySelector('.batch-item-status'),ready(item)?statusText(item):'Нужно выбрать пару');
+      text(row.querySelector('.batch-item-status'),ready(item)?statusText(item)+(findings.length?' · проверить':''):'Нужна доступная пара');
       row.querySelector('.batch-item-status').dataset.status=ready(item)?item.status:'incomplete';
       text(row.querySelector('.batch-item-error'),item.error||'');
       motion.progress(row.querySelector('.batch-item-progress'),item.progress||0);
@@ -108,6 +112,7 @@
       $('batchSummary').textContent=batch.items.length?`Выбрано ${count} из ${batch.items.length} · сохранено ${completed}`:'Пока нет роликов для экспорта.';
     }
     refreshLocks();
+    window.dispatchEvent(new Event('queuechange'));
   }
   function patchRow(row,item){
     const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>s?.id),...item.snapshot.settings.crops,...item.snapshot.settings.crops_x,item.snapshot.settings.format].join('|');
@@ -157,6 +162,7 @@
         if(!row){row=makeRow(item);rows.set(item.id,row);list.append(row);}
         patchRow(row,item);
       }
+      batch.items.forEach((item,index)=>{const row=rows.get(item.id);if(list.children[index]!==row)list.insertBefore(row,list.children[index]||null);});
       if(!batch.items.length){const empty=document.createElement('p');empty.className='batch-empty';empty.textContent='Добавьте папки с артикулами';list.append(empty);}
     });
     updateRows();
@@ -174,7 +180,7 @@
   }
   function swap(item){
     if(locked())return;
-    remember();item.snapshot.sources.reverse();
+    remember();item.snapshot.sources.reverse();item.snapshot.settings.trims=[null,null];
     // Crop follows the role, so the model still uses its legs framing.
     changedItem(item);
   }
@@ -206,7 +212,9 @@
       $('batchImportText').textContent=`${task.processed} из ${task.total} · ${importLabel(task)}${task.current?' · '+task.current:''}`;
       $('batchImportProgress').value=task.progress||0;
       if(task.status==='running'){setTimeout(pollImport,700);return;}
-      await addGroups(task.groups);endImport();
+      if(task.command?.action==='new')await window.batchWorkspace?.archive();
+      const before=new Set(batch.items.map(item=>item.id));await addGroups(task.groups);endImport();
+      await window.batchWorkspace?.imported(task.command,batch.items.filter(item=>!before.has(item.id)));
       if(task.skipped)$('batchImportNotice').textContent=`Готовые экспорты OUTMAX пропущены: ${task.skipped}.`;
       if(task.errors.length)error('Не удалось прочитать:\n'+task.errors.map(e=>e.file+': '+e.error).join('\n'));
     }catch(e){error(e.message);endImport();}
@@ -237,7 +245,7 @@
     const allVideos=files.filter(item=>/\.(mp4|mov|m4v|mkv|avi|webm)$/i.test(item.file.name));
     const videos=allVideos.filter(item=>{
       const parts=item.relative.replaceAll('\\','/').split('/');
-      const match=/^([0-9]+)\.mp4$/i.exec(item.file.name);
+      const match=/^([0-9]+)(?:_[0-9]+x[0-9]+(?:_[a-zA-Z0-9_-]+)?)?(?:_v[0-9]+)?\.mp4$/i.exec(item.file.name);
       const archive=parts.slice(0,-1).join('/')+'/Руки + Ноги/';
       const articleExport=match&&parts.at(-2)===match[1]&&['ноги','руки'].every(role=>
         allVideos.some(candidate=>candidate.relative.replaceAll('\\','/').startsWith(archive+match[1]+'_'+role+'.')));
@@ -288,6 +296,10 @@
       }
       motion.progress($('batchProgress'),sum/run.jobs.length);
       $('batchSummary').textContent=`Обработано ${finished} из ${run.jobs.length} · сохранено ${run.jobs.filter(j=>j.status==='done').length}`;
+      const fileCount=run.jobs.reduce((count,job)=>count+job.variants.filter(v=>v.status==='done').length,0),fileTotal=run.jobs.reduce((count,job)=>count+job.variants.length,0);
+      const progress=run.jobs.reduce((sum,job)=>sum+(['done','error','cancelled'].includes(job.status)?100:job.progress),0)/run.jobs.length;
+      const elapsed=(Date.now()-(batch.startedAt||Date.now()))/1000,eta=progress>3?Math.round(elapsed/progress*(100-progress)):null;
+      $('batchSummary').textContent+=` · файлов ${fileCount}/${fileTotal}${eta?' · ≈ '+Math.ceil(eta/60)+' мин':''}`;
       updateRows();
       if(run.status==='running'){setTimeout(pollBatch,900);return;}
       batch.running=false;state.externalLocked=false;$('batchCancelButton').hidden=true;
@@ -296,20 +308,64 @@
       window.autoPreview?.schedule();
     }catch(e){error('Не удалось обновить очередь. Повторяем проверку…');setTimeout(pollBatch,2000);}
   }
-  async function exportSelected(){
+  async function exportSelected(options={}){
     if(locked())return;
-    remember();const chosen=batch.items.filter(i=>i.selected&&ready(i));if(!chosen.length)return;
+    remember();const chosen=batch.items.filter(i=>(options.ids?options.ids.includes(i.id):i.selected)&&ready(i));if(!chosen.length)return;
     batch.running=true;state.externalLocked=true;error('');refresh();
     window.autoPreview?.cancel();
     try{
       const run=await api('/api/batch/render',{output:$('batchOutputPath').value.trim(),
-        items:chosen.map(i=>({item_id:i.id,name:i.name,sources:i.snapshot.sources.map(s=>s.id),...i.snapshot.settings}))});
-      batch.id=run.id;$('batchProgress').hidden=false;motion.progress($('batchProgress'),0);
+        items:chosen.map(i=>({item_id:i.id,name:i.name,sources:i.snapshot.sources.map(s=>s.id),...i.snapshot.settings,_repeat:!!options.repeat}))});
+      batch.id=run.id;batch.startedAt=Date.now();batch.lastSettings=structuredClone(chosen[0].snapshot.settings);$('batchProgress').hidden=false;motion.progress($('batchProgress'),0);
       $('batchCancelButton').hidden=false;$('batchCancelButton').disabled=false;pollBatch();
+      window.dispatchEvent(new Event('queuechange'));
     }catch(e){batch.running=false;state.externalLocked=false;error(e.message);refresh();}
   }
   window.batchController={
     refreshLocks,
+    get items(){return batch.items;},get current(){return current();},get mode(){return batch.mode;},get locked(){return locked();},get lastSettings(){return batch.lastSettings;},
+    ready,remember,open:openAndView,render:renderList,switchMode,export:exportSelected,
+    persistPayload(){
+      remember();const payload={items:structuredClone(batch.items),single:batch.mode?structuredClone(batch.single):editorSnapshot(),active:batch.active,mode:batch.mode,output:$('batchOutputPath').value,batch_id:batch.running?batch.id:null,lastSettings:batch.lastSettings};
+      for(const snapshot of [...payload.items.map(item=>item.snapshot),payload.single].filter(Boolean)){snapshot.preview=null;if(snapshot.result)snapshot.result={id:snapshot.result.id};}
+      return payload;
+    },
+    async restore(data){
+      const saved=data.session;if(!saved)return;
+      const hydrate=snapshot=>{
+        if(!snapshot)return {sources:[null,null],settings:defaults()};
+        snapshot.sources=snapshot.sources.map(source=>source?data.sources[source.id]||{...source,missing:true}:null);
+        snapshot.result=snapshot.result?data.jobs[snapshot.result.id]||null:null;snapshot.preview=null;
+        snapshot.settings.formats=(snapshot.settings.formats||['standard']).filter(id=>formatSpecs[id]);if(!snapshot.settings.formats.length)snapshot.settings.formats=['standard'];
+        if(!snapshot.settings.formats.includes(snapshot.settings.format))snapshot.settings.format=snapshot.settings.formats[0];return snapshot;
+      };
+      batch.items=saved.items.map(item=>({...item,status:['queued','running'].includes(item.status)?'cancelled':item.status,candidates:item.candidates.map(source=>data.sources[source.id]||{...source,missing:true}),snapshot:hydrate(item.snapshot)}));
+      batch.active=batch.items.some(item=>item.id===saved.active)?saved.active:batch.items[0]?.id||null;batch.lastSettings=saved.lastSettings;
+      if(saved.output)$('batchOutputPath').value=saved.output;
+      const single=hydrate(saved.single);if(saved.mode)switchMode(true);else{batch.loading=true;loadEditor(single);batch.loading=false;}
+      batch.single=single;renderList();if(saved.mode&&batch.active){batch.loading=true;openItem(batch.active);batch.loading=false;}
+      if(saved.batch_id)try{const run=await api('/api/batches/'+saved.batch_id);if(run.status==='running'){batch.running=true;state.externalLocked=true;batch.id=saved.batch_id;batch.startedAt=Date.now();$('batchCancelButton').hidden=false;$('batchProgress').hidden=false;refresh();pollBatch();}}catch{}
+    },
+    apply(settings,ids,keys){
+      if(locked())return;remember();
+      for(const item of batch.items.filter(item=>ids.includes(item.id))){for(const key of keys)if(settings[key]!==undefined)item.snapshot.settings[key]=structuredClone(settings[key]);item.snapshot.preview=null;item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
+      if(ids.includes(batch.active)){batch.loading=true;loadEditor(current().snapshot);batch.loading=false;}renderList();
+    },
+    swap(id){if(!locked()){const item=batch.items.find(item=>item.id===id);if(item)swap(item);}},
+    move(id,direction){if(locked())return;remember();const index=batch.items.findIndex(item=>item.id===id);if(index<0)return;const target=direction==='first'?0:direction==='last'?batch.items.length-1:Math.max(0,Math.min(batch.items.length-1,index+direction));const [item]=batch.items.splice(index,1);batch.items.splice(target,0,item);renderList();},
+    remove(id){if(locked())return;remember();batch.items=batch.items.filter(item=>item.id!==id);if(batch.active===id){batch.active=null;if(batch.items.length)openItem(batch.items[0].id);else{$('batchDetail').hidden=true;$('editorWorkspace').hidden=true;}}renderList();},
+    clear(){if(locked())return;remember();batch.items=[];batch.active=null;$('editorWorkspace').hidden=true;$('batchDetail').hidden=true;renderList();},
+    formatsChanged(){
+      remember();
+      for(const snapshot of [...batch.items.map(item=>item.snapshot),batch.single].filter(Boolean)){
+        snapshot.settings.format_catalog=structuredClone(formatCatalog);
+        snapshot.settings.formats=(snapshot.settings.formats||['standard']).filter(id=>formatSpecs[id]);
+        if(!snapshot.settings.formats.length)snapshot.settings.formats=['standard'];
+        if(!snapshot.settings.formats.includes(snapshot.settings.format))snapshot.settings.format=snapshot.settings.formats[0];
+        snapshot.preview=null;snapshot.stale=!!snapshot.result;
+      }
+      for(const item of batch.items)item.status='changed';renderList();
+    },
     selectAll(checked){if(locked())return;batch.items.forEach(item=>item.selected=checked&&ready(item));updateRows();},
     changed(){if(batch.mode&&!batch.loading){remember();scheduleCurrent();}},
     previewCompleted(){if(batch.mode&&!batch.loading){remember();scheduleCurrent();}},
@@ -348,7 +404,7 @@
     if(locked()||!current())return;remember();const item=current();
     const chosen=item.candidates.find(c=>c.id===e.target.value)||null;
     if(chosen&&item.snapshot.sources[1-i]?.id===chosen.id)item.snapshot.sources[1-i]=null;
-    item.snapshot.sources[i]=chosen;changedItem(item);
+    item.snapshot.sources[i]=chosen;item.snapshot.settings.trims=[null,null];changedItem(item);
   };
   $('generalSettingsButton').onclick=()=>{
     if(locked()||!batch.items.length)return;
@@ -358,9 +414,9 @@
   $('applySettingsButton').onclick=()=>{
     if(locked()||!current())return;remember();const settings=structuredClone(current().snapshot.settings);
     const others=batch.items.filter(item=>item.id!==batch.active);
-    for(const item of others){item.snapshot.settings=structuredClone(settings);item.snapshot.preview=null;item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
+    for(const item of others){const trims=item.snapshot.settings.trims||[null,null];item.snapshot.settings={...structuredClone(settings),trims};item.snapshot.preview=null;item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
     batch.loading=true;loadEditor(current().snapshot);batch.loading=false;renderList();
-    $('batchDetailNote').textContent=`Настройки применены к остальным роликам: ${others.length}. Режим, переход, кадрирование, удаление пауз и битрейт скопированы.`;
+    $('batchDetailNote').textContent=`Настройки применены к остальным роликам: ${others.length}. Масштаб и форматы скопированы; ручные границы каждого товара сохранены.`;
   };
   $('batchRenderButton').onclick=exportSelected;
   $('batchCancelButton').onclick=async()=>{
@@ -371,6 +427,7 @@
     try{
       if(!locked()){
         const task=await api('/api/shell/import',{});
+        if(task.command)await window.batchWorkspace?.shellCommand(task.command);
         if(task.id){
           switchMode(true);beginImport();batch.importId=task.id;pollImport();
         }

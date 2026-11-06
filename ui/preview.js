@@ -34,7 +34,8 @@
           job=null;state.preview=result;$('previewTab').disabled=false;
           status(task.cached?'Превью из кэша · 30 кадров/с':'Превью готово · 30 кадров/с');
           const player=$('mainVideo'),liveVersion=window.livePreview?.version;
-          const playback=player.getAttribute('src')?.startsWith('/result/')?{time:player.currentTime,paused:player.paused,onRestored:()=>window.livePreview?.finish(liveVersion)}:null;
+          const saved=state.restorePlayback;state.restorePlayback=null;
+          const playback=player.getAttribute('src')?.startsWith('/result/')||saved?{time:saved?.time??player.currentTime,paused:saved?.paused??player.paused,onRestored:()=>window.livePreview?.finish(liveVersion)}:null;
           if(playback)window.livePreview?.suspend(playback.time);
           if(player.dataset.userSourceView!=='true')selectTab(false,true,playback);
           window.batchController?.previewCompleted();

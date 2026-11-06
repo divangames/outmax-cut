@@ -1,6 +1,6 @@
 ﻿#define AppName "OUTMAX Cut"
 #ifndef AppVersion
-#define AppVersion "1.3.0"
+#define AppVersion "1.8.0"
 #endif
 [Setup]
 AppId={{59722AFB-A431-44DF-B79F-8DD2D4256CD2}
@@ -37,34 +37,15 @@ Source: "..\dist\{#AppVersion}\OUTMAX-Cut\*"; DestDir: "{app}"; Flags: ignorever
 Name: "{group}\OUTMAX Cut"; Filename: "{app}\OUTMAX-Cut.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\OUTMAX Cut"; Filename: "{app}\OUTMAX-Cut.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 [Run]
+Filename: "{app}\OUTMAX-Cut.exe"; Parameters: "--register-shell"; Flags: runhidden waituntilterminated
 Filename: "{app}\OUTMAX-Cut.exe"; Description: "Запустить OUTMAX Cut"; Flags: nowait postinstall skipifsilent
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\OutmaxCut"; ValueType: string; ValueName: ""; ValueData: "Смонтировать видео для сайта"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\OutmaxCut"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\OUTMAX-Cut.exe"",0"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\OutmaxCut"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\OutmaxCut\command"; ValueType: string; ValueData: """{app}\OUTMAX-Cut.exe"" --open ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.m4v\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\OutmaxCut"; ValueType: string; ValueName: "MUIVerb"; ValueData: "OUTMAX Cut"; Flags: uninsdeletekey
