@@ -45,6 +45,30 @@ def test():
         window.native.BeginInvoke(Action(inspect))
         assert checked.wait(5), "Notification callback timed out"
         print("Notification inspected",flush=True)
+        # Folder notifications must leave the editor hidden. A subsequent tray
+        # refresh must not replace the completion banner's captured action.
+        opened=threading.Event();report=lambda:None
+        notifier.background(window,report,lambda:None,lambda:None)
+        window.hide()
+        notifier.notify(window,"Автосборка завершена","Нажмите, чтобы открыть готовые ролики.",
+                        force=True,on_click=opened.set,activate_on_click=False)
+        notifier.background(window,report,lambda:None,lambda:None)
+        checked.clear()
+        def inspect_folder():
+            try:
+                assert not window.native.Visible
+                assert notifier.tray_action is report
+                method=notifier.tray.GetType().GetMethod("OnBalloonTipClicked",BindingFlags.NonPublic|BindingFlags.Instance)
+                args=[] if len(method.GetParameters())==0 else [EventArgs.Empty]
+                method.Invoke(notifier.tray,Array[Object](args))
+                assert not window.native.Visible, "Folder banner restored the editor"
+                assert notifier.tray.Visible, "Resident tray disappeared"
+            except Exception as exc:errors.append(exc)
+            finally:checked.set()
+        window.native.BeginInvoke(Action(inspect_folder))
+        assert checked.wait(5), "Folder banner inspection timed out"
+        assert opened.wait(5), "Folder callback did not run"
+        print("Folder notification inspected",flush=True)
     except Exception as exc:
         errors.append(exc)
     finally:
@@ -56,4 +80,4 @@ webview.start(test,gui="edgechromium")
 faulthandler.cancel_dump_traceback_later()
 if errors:
     raise RuntimeError(str(errors))
-print("PASS: native minimized window, tray notification, banner click restores window, tray disposed on close")
+print("PASS: normal banner restores editor; folder banner runs captured action without restoring editor; tray disposed on close")

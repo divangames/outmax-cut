@@ -1,6 +1,6 @@
 ﻿#define AppName "OUTMAX Cut"
 #ifndef AppVersion
-#define AppVersion "1.9.1"
+#define AppVersion "1.9.2"
 #endif
 [Setup]
 AppId={{59722AFB-A431-44DF-B79F-8DD2D4256CD2}

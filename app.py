@@ -985,9 +985,11 @@ def show_background_editor():
     if window:window.evaluate_js('window.batchWorkspace && window.batchWorkspace.activateEditor(); null')
 
 
-def open_automation_folder():
-    manager=get_automation();latest=manager.snapshot()['runs']
-    path=Path(latest[0]['output']) if latest else OUTPUT
+def open_automation_folder(output=None):
+    if output is None:
+        latest=get_automation().snapshot()['runs']
+        output=latest[0]['output'] if latest else OUTPUT
+    path=Path(output)
     if path.is_dir():os.startfile(str(path))
     else:show_automation_report()
 
@@ -1007,7 +1009,11 @@ def automation_finished(run):
     ensure_background_tray('OUTMAX Cut · '+run['stage'])
     review=run['status'] in ('error','done_with_review')
     title='Автосборка завершена' if run['status'] not in ('error','cancelled') else 'Автосборка остановлена' if run['status']=='cancelled' else 'Ошибка автосборки'
-    notifications.notify(window,title,run['stage'],review,force=True,on_click=show_automation_report)
+    completed=run['status'] in ('done','done_with_review')
+    output=run['output']
+    notifications.notify(window,title,run['stage'],review,force=True,
+                         on_click=(lambda:open_automation_folder(output)) if completed else show_automation_report,
+                         activate_on_click=not completed)
 
 
 def process_automatic_pair(item,settings,output,cancel,update):

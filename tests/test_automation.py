@@ -88,6 +88,28 @@ class AutomaticAppTests(unittest.TestCase):
         with patch.object(server,'window',window),patch.object(server,'get_automation',return_value=manager),patch.object(server,'ensure_background_tray'):
             response=self.client.post('/api/shell/enqueue',json={'action':'auto','paths':[str(self.root/'45555_model.mov')]},headers=self.headers)
         self.assertEqual(response.status_code,200);window.show.assert_not_called();window.restore.assert_not_called();manager.enqueue.assert_called_once()
+    def test_completion_banner_opens_its_own_output_without_activating_editor(self):
+        first=self.root/'Готовые ролики';first.mkdir()
+        second=self.root/'Другая сборка';second.mkdir()
+        for status in ('done','done_with_review'):
+            with self.subTest(status=status),patch.object(server,'ensure_background_tray'),patch.object(server.notifications,'notify') as notify:
+                server.automation_finished(dict(status=status,stage='Готово: 6',output=str(first)))
+                click=notify.call_args.kwargs['on_click']
+                self.assertFalse(notify.call_args.kwargs['activate_on_click'])
+                manager=Mock();manager.snapshot.return_value={'runs':[{'output':str(second)}]}
+                with patch.object(server,'get_automation',return_value=manager),patch.object(server.os,'startfile') as open_folder:
+                    click()
+                open_folder.assert_called_once_with(str(first));manager.snapshot.assert_not_called()
+    def test_failed_or_cancelled_banner_keeps_report_action(self):
+        for status in ('error','cancelled'):
+            with self.subTest(status=status),patch.object(server,'ensure_background_tray'),patch.object(server.notifications,'notify') as notify:
+                server.automation_finished(dict(status=status,stage='Остановлено',output=str(self.root)))
+                self.assertIs(notify.call_args.kwargs['on_click'],server.show_automation_report)
+                self.assertTrue(notify.call_args.kwargs['activate_on_click'])
+    def test_removed_output_folder_falls_back_to_report(self):
+        with patch.object(server,'show_automation_report') as report,patch.object(server.os,'startfile') as open_folder:
+            server.open_automation_folder(self.root/'Удалено')
+        report.assert_called_once();open_folder.assert_not_called()
     def test_existing_output_skips_before_reading_or_moving_sources(self):
         folder=self.root/'exports'/'45555';folder.mkdir(parents=True);(folder/'45555.mp4').write_bytes(b'keep')
         with patch.object(server,'register_source') as prepare:
