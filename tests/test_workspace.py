@@ -42,6 +42,18 @@ class WorkspaceTests(unittest.TestCase):
         source=self.source();payload=self.payload(source);self.store.save(payload,server.sources,{},self.work)
         with self.assertRaises(ValueError):self.store.save({'items':[], 'bad':float('nan')},server.sources,{},self.work)
         self.assertEqual(self.store.read()['payload']['active'],'one')
+    def test_legacy_incomplete_import_restores_available_clip_without_overriding_manual_clear(self):
+        entry=self.source()
+        for note,expected in (
+                ('Выберите два исходника вручную: в папке не два видео.',['fixture',None]),
+                ('Порядок и настройки заданы вручную.',[None,None])):
+            with self.subTest(note=note):
+                payload=self.payload(entry);item=payload['items'][0]
+                item['snapshot']['sources']=[None,None];item['selected']=False;item['detection']=note
+                self.store.save(payload,server.sources,{},self.work)
+                restored=self.client.get('/api/session').json['session']['items'][0]
+                self.assertEqual([s['id'] if s else None for s in restored['snapshot']['sources']],expected)
+                self.assertFalse(restored['selected'])
     def test_previous_atomic_snapshot_can_recover_a_corrupt_queue(self):
         source=self.source();payload=self.payload(source);self.store.save(payload,server.sources,{},self.work)
         self.store.save(payload|{'active':'later'},server.sources,{},self.work);self.store.file.write_text('{',encoding='utf-8')

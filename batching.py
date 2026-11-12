@@ -70,6 +70,19 @@ def model_score(proxy):
 
 
 def suggest_pair(candidates):
+    if len(candidates) == 1:
+        source = candidates[0]
+        role = name_role(source["name"])
+        if role:
+            note = "Роль определена по названию файла."
+        else:
+            # A full-height model occupies more of the upper frame than hands.
+            # This absolute fallback is only a suggestion; swapping stays available.
+            role = "model" if source.get("model_score", .5) >= .65 else "hands"
+            note = "Роль предложена по изображению. Проверьте «Модель» и «Руки»."
+        pair = [source["id"], None] if role == "model" else [None, source["id"]]
+        missing = "рук" if role == "model" else "ног (модель)"
+        return pair, f"{note} Нет видео {missing}. Товар будет пропущен при сборке."
     if len(candidates) != 2:
         return [None, None], "Выберите два исходника вручную: в папке не два видео."
     a, b = candidates

@@ -69,7 +69,20 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(suggest_pair([a,b])[0],["b","a"])
         a["name"]="one.MOV";b["name"]="two.MOV"
         self.assertEqual(suggest_pair([a,b])[0],["a","b"])
-        self.assertEqual(suggest_pair([a])[0],[None,None])
+        self.assertEqual(suggest_pair([a])[0],["a",None])
+
+    def test_single_clip_keeps_named_role_before_image_suggestion(self):
+        for name,score,pair,missing in (
+                ("45555_ноги.mov",.1,["a",None],"рук"),
+                ("45555_руки.mp4",.9,[None,"a"],"ног"),
+                ("47433.MOV",.78,["a",None],"рук"),
+                ("47433.mp4",.58,[None,"a"],"ног")):
+            with self.subTest(name=name):
+                assigned,note=suggest_pair([source("a",name,score=score)])
+                self.assertEqual(assigned,pair)
+                self.assertIn("Нет видео "+missing,note)
+                self.assertIn("пропущен",note)
+        self.assertEqual(suggest_pair([])[0],[None,None])
 
     def test_exact_article_path_and_existing_folder(self):
         dest = self.root / "44238"
@@ -111,7 +124,7 @@ class BatchTests(unittest.TestCase):
         groups=group_sources(entries)
         self.assertEqual(len(groups),2)
         self.assertEqual(groups[0]["sources"],["a","b"])
-        self.assertEqual(groups[1]["sources"],[None,None])
+        self.assertEqual(groups[1]["sources"],[None,"c"])
         entries=[source(str(i),name,"A/"+name) for i,name in enumerate(
             ["123_model.mov","123_hands.mov","456_модель.mov","456_руки.mov"])]
         self.assertEqual(len(group_sources(entries)),2)

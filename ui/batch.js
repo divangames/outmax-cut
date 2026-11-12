@@ -8,6 +8,13 @@
   const text=(el,value)=>{if(el.textContent!==String(value))el.textContent=String(value);};
   const current = () => batch.items.find(item=>item.id===batch.active);
   const ready = item => item.snapshot.sources.every(source=>source&&!source.missing) && item.snapshot.sources[0].id!==item.snapshot.sources[1].id;
+  const incompleteText = item => {
+    const [model,hands]=item.snapshot.sources.map(source=>source&&!source.missing);
+    if(!model&&!hands)return item.candidates.some(source=>!source.missing)?'Выберите модель и руки':'Нет видео ног и рук';
+    if(!model)return 'Нет видео ног';
+    if(!hands)return 'Нет видео рук';
+    return 'Выберите разные видео';
+  };
   const locked = () => state.running||state.automationRunning||state.uploading.some(Boolean)||batch.running||batch.importing||batch.collecting;
   const error = message => {$('batchError').textContent=message;$('batchError').hidden=!message;if(!batch.mode)showError(message);};
   function remember(){
@@ -75,7 +82,7 @@
     $('editorWorkspace').hidden=false;$('batchDetail').hidden=false;
     batch.loading=true;loadEditor(item.snapshot);batch.loading=false;
     detailSelectors(item);
-    if(!item.snapshot.result&&!item.snapshot.preview)window.previewSource?.(0);
+    if(!item.snapshot.result&&!item.snapshot.preview)window.previewSource?.(item.snapshot.sources.findIndex(source=>source&&!source.missing));
     for(const [key,row] of rows)row.classList.toggle('selected',key===id);
     refreshLocks();
   }
@@ -93,11 +100,12 @@
       const row=rows.get(item.id);
       if(!row)continue;
       const findings=(item.snapshot.result?.variants||[]).flatMap(v=>v.report?.quality?.findings||[]);
-      const statusKey=[item.status,item.progress,item.error,ready(item),item.selected,findings.length].join('|');
+      const statusKey=[item.status,item.progress,item.error,ready(item),incompleteText(item),item.selected,findings.length].join('|');
       if(row.dataset.statusKey===statusKey)continue;
       row.dataset.statusKey=statusKey;
       row.querySelector('.batch-item-check').checked=item.selected;
-      text(row.querySelector('.batch-item-status'),ready(item)?statusText(item)+(findings.length?' · проверить':''):'Нужна доступная пара');
+      text(row.querySelector('.batch-item-status'),ready(item)?statusText(item)+(findings.length?' · проверить':''):incompleteText(item));
+      row.querySelector('.batch-item-status').title=ready(item)?'':'Товар будет пропущен при сборке, пока не выбраны два доступных видео: модель и руки.';
       row.querySelector('.batch-item-status').dataset.status=ready(item)?item.status:'incomplete';
       text(row.querySelector('.batch-item-error'),item.error||'');
       motion.progress(row.querySelector('.batch-item-progress'),item.progress||0);
@@ -115,7 +123,7 @@
     window.dispatchEvent(new Event('queuechange'));
   }
   function patchRow(row,item){
-    const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>s?.id),...item.snapshot.settings.crops,...item.snapshot.settings.crops_x,item.snapshot.settings.format].join('|');
+    const visualKey=[item.selected,item.name,...item.snapshot.sources.map(s=>`${s?.id}:${!!s?.missing}`),...item.snapshot.settings.crops,...item.snapshot.settings.crops_x,item.snapshot.settings.format].join('|');
     if(row.dataset.visualKey===visualKey)return;
     row.dataset.visualKey=visualKey;
     row.classList.toggle('selected',item.id===batch.active);
@@ -124,11 +132,12 @@
     open.title=item.name+' · '+item.detection;
     for(let i=0;i<2;i++){
       const source=item.snapshot.sources[i],cell=row.querySelectorAll('.pair-preview')[i];
-      const signature=[source?.id,item.snapshot.settings.crops[i],item.snapshot.settings.crops_x[i],item.snapshot.settings.format].join(':');
+      const signature=[source?.id,source?.missing,item.snapshot.settings.crops[i],item.snapshot.settings.crops_x[i],item.snapshot.settings.format].join(':');
       if(cell.dataset.signature===signature)continue;
       cell.dataset.signature=signature;cell.replaceChildren();
-      const label=document.createElement('span');label.textContent=source?.name||(i===0?'Нет видео ног':'Нет видео рук');
-      if(source){const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=source.poster;img.alt='';img.width=48;img.height=48;img.style.objectPosition=`${item.snapshot.settings.crops_x[i]*100}% ${item.snapshot.settings.crops[i]*100}%`;const [w,h]=formatSpecs[item.snapshot.settings.format];img.style.aspectRatio=`${w}/${h}`;img.style.height='auto';cell.append(img);}
+      const label=document.createElement('span');label.textContent=source&&!source.missing?source.name:(i===0?'Нет видео ног':'Нет видео рук');
+      cell.title=(i===0?'Модель':'Руки')+' · '+label.textContent+(source?.missing?' · '+source.name:'');
+      if(source&&!source.missing){const img=document.createElement('img');img.loading='lazy';img.decoding='async';img.src=source.poster;img.alt='';img.width=48;img.height=48;img.style.objectPosition=`${item.snapshot.settings.crops_x[i]*100}% ${item.snapshot.settings.crops[i]*100}%`;const [w,h]=formatSpecs[item.snapshot.settings.format];img.style.aspectRatio=`${w}/${h}`;img.style.height='auto';cell.append(img);}
       else {const empty=document.createElement('span');empty.className='no-source';empty.textContent='—';cell.append(empty);}
       cell.append(label);
     }

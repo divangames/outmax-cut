@@ -1140,7 +1140,18 @@ def restore_session():
             if not all(v['output'].is_file() for v in entry['variants']):continue
             entry['cancel']=threading.Event();jobs.setdefault(key,entry);restored_jobs[key]=job_view(jobs[key])
         except (KeyError,TypeError):continue
-    return jsonify(session=data['payload'],sources={key:public_source(sources[key]) for key in data['sources'] if key in sources},jobs=restored_jobs,missing=missing)
+    restored_sources={key:public_source(sources[key]) for key in data['sources'] if key in sources}
+    for item in data['payload'].get('items',[]):
+        # Repair only the old import placeholder; retain intentional manual clears.
+        candidates=item.get('candidates',[])
+        if (len(candidates)==1 and not any(item['snapshot']['sources']) and
+                item.get('detection')=='Выберите два исходника вручную: в папке не два видео.'):
+            source=restored_sources.get(candidates[0]['id'])
+            if source and not source['missing']:
+                pair,item['detection']=suggest_pair([source])
+                item['sources']=pair
+                item['snapshot']['sources']=[restored_sources.get(key) for key in pair]
+    return jsonify(session=data['payload'],sources=restored_sources,jobs=restored_jobs,missing=missing)
 
 
 @app.get('/api/session/archives')
