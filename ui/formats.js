@@ -39,6 +39,7 @@
       input.type='checkbox';input.value=item.id;input.checked=formats.includes(item.id);name.className='format-choice-name';name.textContent=item.name;size.textContent=`${item.width} × ${item.height}`;label.append(input,name,size);field.append(label);
       $('outputFormat').add(new Option(`${item.name} · ${item.width} × ${item.height}`,item.id));
     }
+    const note=document.createElement('p');note.id='formatScopeNote';note.className='field-help';note.textContent='Для всех товаров очереди, включая добавленные позже.';note.hidden=!window.batchController?.mode;field.append(note);
     const valid=formats.filter(id=>formatSpecs[id]);syncFormats(valid.length?valid:['standard']);
     if(valid.includes(preview))$('outputFormat').value=preview;
     window.editorExtras?.installResets();updateFormat();refresh();

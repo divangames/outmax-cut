@@ -51,6 +51,7 @@
     else{remember();batch.mode=false;}
     $('singleMode').setAttribute('aria-pressed',String(!enabled));$('batchMode').setAttribute('aria-pressed',String(enabled));
     document.body.classList.toggle('batch-mode',enabled);
+    if($('formatScopeNote'))$('formatScopeNote').hidden=!enabled;
     motion.visible($('batchPanel'),enabled);
     window.workspaceLayout?.(enabled);
     $('pageTitle').textContent=enabled?'Пакетная обработка':'Редактор видео';
@@ -198,7 +199,7 @@
     const newItems=groups.map(group=>({
       ...group,id:crypto.randomUUID(),selected:group.sources.every(Boolean),status:'ready',
       snapshot:{sources:group.sources.map(id=>group.candidates.find(c=>c.id===id)||null),
-        settings:defaults(),result:null,stale:false}
+        settings:{...defaults(),formats:[...selectedFormats()],format:$('outputFormat').value},result:null,stale:false}
     }));
     for(let i=0;i<newItems.length;i+=40){batch.items.push(...newItems.slice(i,i+40));renderList();await new Promise(resolve=>setTimeout(resolve,0));}
     if(!batch.active&&newItems.length)openItem(newItems[0].id);
@@ -312,7 +313,7 @@
       updateRows();
       if(run.status==='running'){setTimeout(pollBatch,900);return;}
       batch.running=false;state.externalLocked=false;$('batchCancelButton').hidden=true;
-      $('batchSummary').textContent=run.status==='cancelled'?'Очередь отменена. Готовые файлы сохранены.':run.status==='done_with_errors'?'Очередь завершена с ошибками. Их причины указаны у роликов.':`Готово. Сохранено ${run.jobs.length} роликов.`;
+      $('batchSummary').textContent=run.status==='cancelled'?'Очередь отменена. Готовые файлы сохранены.':run.status==='done_with_errors'?'Очередь завершена с ошибками. Их причины указаны у роликов.':`Готово. Сохранено ${run.jobs.length} роликов.${fileCount!==run.jobs.length?' Файлов: '+fileCount+'.':''}`;
       refresh();refreshLocks();
       window.autoPreview?.schedule();
     }catch(e){error('Не удалось обновить очередь. Повторяем проверку…');setTimeout(pollBatch,2000);}
@@ -359,6 +360,17 @@
       if(locked())return;remember();
       for(const item of batch.items.filter(item=>ids.includes(item.id))){for(const key of keys)if(settings[key]!==undefined)item.snapshot.settings[key]=structuredClone(settings[key]);item.snapshot.preview=null;item.snapshot.stale=!!item.snapshot.result;item.status='changed';item.error=null;}
       if(ids.includes(batch.active)){batch.loading=true;loadEditor(current().snapshot);batch.loading=false;}renderList();
+    },
+    setExportFormats(formats){
+      if(!batch.mode||batch.loading||locked())return;remember();
+      for(const item of batch.items){
+        const snapshot=item.snapshot,settings=snapshot.settings;
+        if(JSON.stringify(settings.formats)===JSON.stringify(formats))continue;
+        settings.formats=[...formats];settings.format_catalog=structuredClone(formatCatalog);
+        if(!formats.includes(settings.format)){settings.format=formats[0];snapshot.preview=null;}
+        snapshot.stale=!!snapshot.result;item.status='changed';item.error=null;
+      }
+      renderList();
     },
     swap(id){if(!locked()){const item=batch.items.find(item=>item.id===id);if(item)swap(item);}},
     move(id,direction){if(locked())return;remember();const index=batch.items.findIndex(item=>item.id===id);if(index<0)return;const target=direction==='first'?0:direction==='last'?batch.items.length-1:Math.max(0,Math.min(batch.items.length-1,index+direction));const [item]=batch.items.splice(index,1);batch.items.splice(target,0,item);renderList();},

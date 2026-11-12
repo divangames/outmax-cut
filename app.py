@@ -447,7 +447,7 @@ def archive_sources(job):
     folder = targets[0][1].parent
     folder.mkdir(exist_ok=True)
     try:
-        # Copy every source exclusively before deleting any original. Works across disks.
+        # Keep originals in place; the result folder receives independent copies.
         for source, target in targets:
             if source["path"].resolve() == target.resolve():
                 continue
@@ -462,11 +462,10 @@ def archive_sources(job):
         if not any(folder.iterdir()):
             folder.rmdir()
         raise
-    # All copies are complete; on a deletion failure retain the archive and remaining originals.
+    # Point future exports at the archive without removing the source footage.
     for source, target in targets:
         original = source["path"]
         if original.resolve() != target.resolve():
-            if not original.resolve().is_relative_to(workspace.media.resolve()):original.unlink()
             for entry in sources.values():
                 if entry["path"] == original:
                     entry["path"] = target

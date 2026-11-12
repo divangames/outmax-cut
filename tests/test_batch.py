@@ -202,7 +202,7 @@ class BatchTests(unittest.TestCase):
             result=self.wait(key)
         self.assertEqual([j["status"] for j in result["jobs"]],["cancelled","cancelled"])
 
-    def test_success_moves_original_bytes_without_extra_files(self):
+    def test_success_copies_original_bytes_and_preserves_inputs(self):
         original = [entry["path"] for entry in server.sources.values()]
         def fake_render(paths, infos, settings, work, output, progress, cancel):
             self.assertTrue(all(path.exists() for path in original))
@@ -213,7 +213,7 @@ class BatchTests(unittest.TestCase):
         with patch.object(server, "render", fake_render):
             server.execute_job(job)
         self.assertEqual(job["status"], "done")
-        self.assertTrue(all(not path.exists() for path in original))
+        self.assertTrue(all(path.exists() for path in original))
         folder = self.root / "44238"
         self.assertEqual({p.name for p in folder.iterdir()}, {"44238.mp4", "Руки + Ноги"})
         self.assertEqual((folder / "Руки + Ноги/44238_ноги.mp4").read_bytes(), b"original-a")
@@ -226,6 +226,20 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(job["status"], "error")
         self.assertTrue(all(s["path"].exists() for s in server.sources.values()))
         self.assertFalse((self.root / "44238/Руки + Ноги").exists())
+
+    def test_export_preserves_excluded_and_selected_sources_in_place(self):
+        excluded=self.extra_pair("47433")
+        before={entry['path']:entry['path'].read_bytes() for entry in server.sources.values()}
+        def fake_render(paths,infos,settings,work,output,progress,cancel):
+            output.write_bytes(b'export');return {'result':{'size':6}}
+        with patch.object(server,'render',fake_render):
+            response=self.client.post('/api/batch/render',json={'output':str(self.root),'items':[self.item(formats=['standard','marketplace','vertical'])]},headers=self.headers)
+            result=self.wait(response.json['id'])
+        self.assertEqual(result['status'],'done')
+        self.assertEqual(len(result['jobs'][0]['variants']),3)
+        for path,data in before.items():self.assertEqual(path.read_bytes(),data)
+        self.assertFalse((self.root/'47433').exists())
+        self.assertTrue(all(server.sources[key]['path'] in before for key in excluded))
 
     def test_preview_works_without_article_or_output_and_preserves_sources(self):
         original=[entry["path"] for entry in server.sources.values()]

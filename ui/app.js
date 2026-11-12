@@ -83,7 +83,7 @@ function refresh() {
   $('renderButton').disabled = count !== 2 || locked || state.uploading.some(Boolean);
   document.querySelectorAll('#exportFormats input').forEach(input=>input.disabled=locked);
   $('renderButton').querySelector('span').textContent = state.result ? 'Собрать заново' : 'Собрать видео';
-  $('readyHint').textContent = state.running ? 'Можно отменить экспорт в любой момент.' : state.stale ? 'Исходники или настройки изменены. Соберите видео заново.' : count === 2 ? 'После экспорта исходники переместятся в «Руки + Ноги».' : 'Добавьте оба исходника, чтобы начать монтаж.';
+  $('readyHint').textContent = state.running ? 'Можно отменить экспорт в любой момент.' : state.stale ? 'Исходники или настройки изменены. Соберите видео заново.' : count === 2 ? 'После экспорта копии исходников сохранятся в «Руки + Ноги». Оригиналы останутся на месте.' : 'Добавьте оба исходника, чтобы начать монтаж.';
   for (let i=0; i<2; i++) {
     $('file'+i).disabled = locked || state.uploading[i];
     $('crop'+i).disabled = locked;
@@ -136,11 +136,15 @@ function syncFormats(formats=selectedFormats()){
   [...$('outputFormat').options].forEach(option=>option.disabled=!formats.includes(option.value));
   if(!formats.includes($('outputFormat').value))$('outputFormat').value=formats[0];
 }
+function changeExportFormats(formats){
+  const oldFormat=$('outputFormat').value;syncFormats(formats);markChanged(oldFormat!==$('outputFormat').value);
+  window.batchController?.setExportFormats(formats);updateFormat();
+}
  $('exportFormats').addEventListener('change',event=>{
   const input=event.target;if(!input.matches('input[type=checkbox]'))return;
   const formats=selectedFormats();
   if(!formats.length){input.checked=true;showError('Должно быть выбрано хотя бы одно разрешение.');return;}
-  const oldFormat=$('outputFormat').value;syncFormats(formats);markChanged(oldFormat!==$('outputFormat').value);updateFormat();
+  changeExportFormats(formats);
 });
 function resultVariant(job=state.result){return job?.variants?.find(v=>v.format===$('resultFormat').value)||job?.variants?.[0]||job;}
 function updateResultFormats(){

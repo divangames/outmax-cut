@@ -19,7 +19,7 @@
         if(input.type==='range')input.dispatchEvent(new Event('change',{bubbles:true}));
       }));
     }
-    const legend=$('exportFormats').querySelector('legend');if(legend&&!legend.querySelector('button'))legend.append(resetButton('Сбросить разрешения экспорта',()=>{syncFormats(['standard']);markChanged();updateFormat();}));
+    const legend=$('exportFormats').querySelector('legend');if(legend&&!legend.querySelector('button'))legend.append(resetButton('Сбросить разрешения экспорта',()=>changeExportFormats(['standard'])));
   }
   const preferenceLabel=$('saveProcessingLog').closest('label');preferenceLabel.append(resetButton('Сбросить сохранение лога',()=>{$('saveProcessingLog').checked=false;$('saveProcessingLog').dispatchEvent(new Event('change'));}));
   const folderLabel=document.querySelector('label[for="batchOutputPath"]');let defaultOutput='';preferencesReady.then(()=>api('/api/config')).then(config=>{defaultOutput=config.output;});
