@@ -92,7 +92,7 @@
     report('Проверка исходников',warnings.length?warnings.join('\n\n'):'Исходники доступны, видеодорожки читаются, пары и настройки проверены. Проверка не запускает экспорт.');
   }
   async function exportNew(items=B.items.filter(item=>item.selected)){
-    if(B.locked)return;B.remember();const checked=await api('/api/batch/preflight',{output:$('batchOutputPath').value,items:itemsPayload(items)});const ids=checked.items.filter(item=>item.status==='ready').map(item=>item.id);
+    if(B.locked)return;B.remember();B.setExportFormats(selectedFormats());const checked=await api('/api/batch/preflight',{output:$('batchOutputPath').value,items:itemsPayload(items)});const ids=checked.items.filter(item=>item.status==='ready').map(item=>item.id);
     if(ids.length)await B.export({ids});else notify('Нет новых товаров для экспорта.');
     const skipped=checked.items.filter(item=>item.status!=='ready');if(skipped.length)notify('Пропущено готовых или требующих исправления товаров: '+skipped.length);
   }

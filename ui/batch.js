@@ -320,7 +320,8 @@
   }
   async function exportSelected(options={}){
     if(locked())return;
-    remember();const chosen=batch.items.filter(i=>(options.ids?options.ids.includes(i.id):i.selected)&&ready(i));if(!chosen.length)return;
+    remember();window.batchController.setExportFormats(selectedFormats());
+    const chosen=batch.items.filter(i=>(options.ids?options.ids.includes(i.id):i.selected)&&ready(i));if(!chosen.length)return;
     batch.running=true;state.externalLocked=true;error('');refresh();
     window.autoPreview?.cancel();
     try{

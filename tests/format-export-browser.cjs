@@ -33,6 +33,8 @@ const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).dig
   assert.deepEqual(await page.evaluate(()=>batchController.items.find(i=>i.name.endsWith('45555')).snapshot.settings.formats),formats);
   await page.evaluate(()=>batchWorkspace.flush());await page.reload();await page.evaluate(()=>workspaceReady);
   assert(await page.evaluate(()=>batchController.items.every(i=>i.snapshot.settings.formats.length===3)));
+  // Simulate an older saved queue: visible choices are three, another item's snapshot is square-only.
+  await page.evaluate(()=>{const item=batchController.items.find(i=>i.name.endsWith('47469'));item.snapshot.settings.formats=['standard'];});
   await page.locator('#batchOutputPath').fill(path.join(out,'exports'));
   const sent=page.waitForRequest(r=>r.url().endsWith('/api/batch/render'));
   await page.locator('#batchRenderButton').click();
